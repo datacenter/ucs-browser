@@ -4,7 +4,7 @@
 
 **Windows**
 - Powershell 3.0 or higher
-- UCS PowerTool 3.0 or higher
+- UCS PowerTool 2.5.1 or higher
 - .NET 4.5 or higher
 
 **Linux**
