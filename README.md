@@ -8,4 +8,5 @@
 - .NET 4.5 or higher
 
 **Linux**
-- [https://github.com/PowerShell/PowerShell/releases/tag/v6.1.1](Powershell 6.1.1)
+- [Powershell 6.1.1](https://github.com/PowerShell/PowerShell/releases/tag/v6.1.1)
+- [Cisco UCS PowerTool Core](https://community.cisco.com/t5/cisco-developed-ucs-integrations/cisco-ucs-powertool-core-suite-for-powershell-core-modules-for/ta-p/3643354)
