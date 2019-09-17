@@ -1,6 +1,7 @@
 ## UCS Health Check and Inventory Script (ported from UCS Communities)
 
 ### Pre-requisites
+---
 
 **Windows**
 - Powershell 3.0 or higher
