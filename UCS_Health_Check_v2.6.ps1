@@ -17,7 +17,7 @@
 				Use the UseCached, RunReport, and Email switch options to automate
 				script execution (especially if scheduling script as a task)
 				
-				Ex: .\UCS_Health_Check_v2.5.ps1 -UseCached -RunReport -Silent -Email user@domain.com
+				Ex: .\UCS_Health_Check_v2.6.ps1 -UseCached -RunReport -Silent -Email user@domain.com
  
         .NOTES        
                 Generated On:  05/11/2014

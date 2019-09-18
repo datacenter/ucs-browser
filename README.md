@@ -19,6 +19,9 @@ Before generating the report select option `1)` from the root menu and connect t
 **Notes for Powertool Core:**<br/><br />
 The save file dialog relies on .NET and therefore doesn't work on linux based systems.  To get around this limitation connect to and cache ucs doman credentials as mentioned above and then exit the script.  Next, relaunch the script using the `-RunReport`, `-UseCached` and `-Silent` flags
 
+
+Ex: .\UCS_Health_Check_v2.6.ps1 -UseCached -RunReport -Silent -Email user@domain.com
+
 ---
 ### Parameters
 **[Vars]**
