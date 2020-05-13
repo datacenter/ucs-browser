@@ -239,9 +239,9 @@ function Write_Report_Files
 		[string]$Type
 	)
 	Write-Host "Inside write report files"
-	New-Item -Path './dist/reports/' -ItemType "directory" -ErrorAction Ignore
-	New-Item -Path "./dist/reports/$Report_Directory" -ItemType "directory" -ErrorAction Ignore
-	$report_folder = "./dist/reports/$Report_Directory/$Name"
+	New-Item -Path './reports/' -ItemType "directory" -ErrorAction Ignore
+	New-Item -Path "./reports/$Report_Directory" -ItemType "directory" -ErrorAction Ignore
+	$report_folder = "./reports/$Report_Directory/$Name"
 	New-Item -Path "$report_folder" -ItemType "directory"
 	switch($Type) {
 		'ucsm' {
@@ -525,16 +525,11 @@ function Generate_Health_Check
 		}
 		$handle = Connect-Ucs $Process_Hash.Creds[$domain].VIP -Credential $Process_Hash.Creds[$domain].Creds
 
-		$report_meta = @{}
-		[System.Collections.ArrayList]$report_meta.fis = @()
-		[System.Collections.ArrayList]$report_meta.chassis = @()
-		[System.Collections.ArrayList]$report_meta.ioms = @()
-
-		New-Item -Path './dist/assets/reports/' -ItemType "directory" -ErrorAction Ignore | Out-Null
-		New-Item -Path "./dist/assets/reports/$Report_Directory" -ItemType "directory" -ErrorAction Ignore | Out-Null
-		$report_folder = "./dist/assets/reports/$Report_Directory/$domain"
+		New-Item -Path './reports' -ItemType "directory" -ErrorAction Ignore | Out-Null
+		New-Item -Path "./reports/$Report_Directory" -ItemType "directory" -ErrorAction Ignore | Out-Null
+		$report_folder = "./reports/$Report_Directory/$domain"
 		New-Item -Path "$report_folder" -ItemType "directory" | Out-Null
-		@('inventory', 'configuration', 'stats', 'faults') | % {
+		@('inventory', 'stats', 'faults') | % {
 			New-Item -Path "$report_folder/$_" -ItemType "directory" | Out-Null
 		}
 
@@ -545,7 +540,7 @@ function Generate_Health_Check
 		#	Start System Data Collection	#
 		#===================================#
 		$Process_Hash.Progress[$domain] = 1
-
+		$ManufacturingDef = Get-UcsEquipmentManufacturingDef
 		
 		#--- Get UCS Cluster State ---#
 		$ucs_domain = @{
@@ -565,14 +560,14 @@ function Generate_Health_Check
 		$ucs_domain.inventory.callHome = (Get-UcsCallHome -Ucs $handle | Select-Object AdminState).AdminState
 		#--- Get System and Server power statistics ---#
 		$ucs_domain.stats.chassis_power = @()
-		$ucs_domain.stats.chassis_power += Get-UcsChassisStats -Ucs $handle | Select-Object Dn,InputPower,InputPowerAvg,InputPowerMax,OutputPower,OutputPowerAvg,OutputPowerMax,Suspect
+		$ucs_domain.stats.chassis_power += Get-UcsChassisStats -Ucs $handle | Select-Object Ucs,Dn,InputPower,InputPowerAvg,InputPowerMax,OutputPower,OutputPowerAvg,OutputPowerMax,Suspect
 		$ucs_domain.stats.chassis_power | % {$_.Dn = $_.Dn -replace ('(sys[/])|([/]stats)',"") }
 		$ucs_domain.stats.server_power = @()
-		$ucs_domain.stats.server_power += Get-UcsComputeMbPowerStats -Ucs $handle | Sort-Object -Property Dn | Select-Object Dn,ConsumedPower,ConsumedPowerAvg,ConsumedPowerMax,InputCurrent,InputCurrentAvg,InputVoltage,InputVoltageAvg,Suspect
+		$ucs_domain.stats.server_power += Get-UcsComputeMbPowerStats -Ucs $handle | Sort-Object -Property Dn | Select-Object Ucs,Dn,ConsumedPower,ConsumedPowerAvg,ConsumedPowerMax,InputCurrent,InputCurrentAvg,InputVoltage,InputVoltageAvg,Suspect
 		$ucs_domain.stats.server_power | % {$_.Dn = $_.Dn -replace ('([/]board.*)',"") }
 		#--- Get Server temperatures ---#
 		$ucs_domain.stats.server_temp = @()
-		$ucs_domain.stats.server_temp += Get-UcsComputeMbTempStats -Ucs $handle | Sort-Object -Property Ucs,Dn | Select-Object Dn,FmTempSenIo,FmTempSenIoAvg,FmTempSenIoMax,FmTempSenRear,FmTempSenRearAvg,FmTempSenRearMax,FmTempSenRearL,FmTempSenRearLAvg,FmTempSenRearLMax,FmTempSenRearR,FmTempSenRearRAvg,FmTempSenRearRMax,Suspect
+		$ucs_domain.stats.server_temp += Get-UcsComputeMbTempStats -Ucs $handle | Sort-Object -Property Ucs,Dn | Select-Object Ucs,Dn,FmTempSenIo,FmTempSenIoAvg,FmTempSenIoMax,FmTempSenRear,FmTempSenRearAvg,FmTempSenRearMax,FmTempSenRearL,FmTempSenRearLAvg,FmTempSenRearLMax,FmTempSenRearR,FmTempSenRearRAvg,FmTempSenRearRMax,Suspect
 		$ucs_domain.stats.server_temp | % {$_.Dn = $_.Dn -replace ('([/]board.*)',"") }
 		Complete-UcsTransaction -Ucs $handle
 
@@ -585,9 +580,9 @@ function Generate_Health_Check
 		#--- Set Job Progress ---#
 		$Process_Hash.Progress[$domain] = 12
 		$fis = @{
-			inventory = @{}
-			faults = @{}
-			stats = @{}
+			inventory = @()
+			faults = @()
+			stats = @()
 		}
 		#--- Iterate through Fabric Interconnects and grab relevant data points ---#
 		Start-UcsTransaction -Ucs $handle
@@ -597,17 +592,12 @@ function Generate_Health_Check
 			#--- Hash variable for storing current FI details ---#
 			$fiHash = @{}
 			$fiHash.Dn = $fi.Dn
+			$fiHash.Ucs = $fi.Ucs
 			$fiHash.Fabric_Id = $fi.Id
 			$fiHash.Operability = $fi.Operability
 			$fiHash.Thermal = $fi.Thermal
-			$meta = @{
-				rn = $fi.Rn
-				dn = $fi.Dn
-				filename = $fi.Rn
-			}
-			$report_meta.fis.Add($meta) | Out-Null
-			$fis.faults[$meta.filename] = $fi | Get-UcsFault
-			$fis.stats[$meta.filename] = $fi | Get-UcsStatistics
+			$fis.faults += $fi | Get-UcsFault
+			$fis.stats += $fi | Get-UcsStatistics
 			#--- Get leadership role and management service state ---#
 			if($fi.Id -eq "A")
 			{
@@ -621,7 +611,7 @@ function Generate_Health_Check
 			}
 			
 			#--- Get the common name of the fi from the manufacturing definition and format the text ---#
-			$fiModel = (Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentManufacturingDef -Ucs $handle -Filter "Sku -cmatch $($fi.Model)" | Select-Object Name).Name -replace "Cisco UCS ", ""
+			$fiModel = ($ManufacturingDef | ? {$_.Sku -cmatch "$($fi.Model)"} | Select-Object Name).Name -replace "Cisco UCS ", ""
 			if($fiModel -is [array]) { $fiHash.Model = $fiModel.Item(0) -replace "Cisco UCS ", "" }
 			else { $fiHash.Model = $fiModel -replace "Cisco UCS ", "" }
 			
@@ -653,34 +643,34 @@ function Generate_Health_Check
 			$fiHash.FcUplinkPorts = Get-UcsFiFcPort -Ucs $handle -SwitchId "$($fi.Id)" -AdminState 'enabled' -IfRole 'network'
 			
 			#--- Store fi hash to domain hash variable ---#
-			$fis.inventory[$meta.filename] = $fiHash
+			$fis.inventory += $fiHash
 			
 			#--- Get FI Role and IP for system tab of report ---#
 			if($fiHash.Fabric_Id -eq 'A')
 			{
-				$ucs_domain.configuration.fi_a_role = $fiHash.Role
-				$ucs_domain.configuration.fi_a_ip = $fiHash.IP
+				$ucs_domain.inventory.fi_a_role = $fiHash.Role
+				$ucs_domain.inventory.fi_a_ip = $fiHash.IP
 			}
 			else
 			{
-				$ucs_domain.configuration.fi_b_role = $fiHash.Role
-				$ucs_domain.configuration.fi_b_ip = $fiHash.IP
+				$ucs_domain.inventory.fi_b_role = $fiHash.Role
+				$ucs_domain.inventory.fi_b_ip = $fiHash.IP
 			}
-		
+			$ucs_domain.inventory.version = $handle.Version
+			$ucs_domain.inventory.vip = $handle.VirtualIpv4Address
+			$ucs_domain.inventory.domain_name = $handle.Ucs
 		}
 		Complete-UcsTransaction -Ucs $handle
 
-		$ucs_domain.get_keys() | % {
-			New-Item -Path "$report_folder/$_/system" -ItemType "directory" -ErrorAction Ignore | Out-Null
-			$ucs_domain[$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$_/system/ucsm.json" | Out-Null
-		}
-		Remove-Variable $ucsm
+		# $ucs_domain.get_keys() | % {
+		# 	New-Item -Path "$report_folder/$_/system" -ItemType "directory" -ErrorAction Ignore | Out-Null
+		# 	$ucs_domain[$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$_/system/ucsm.json" | Out-Null
+		# }
+		# Remove-Variable $ucsm
 		$fis.get_keys() | % {
-			New-Item -Path "$report_folder/$_/fis" -ItemType "directory" -ErrorAction Ignore | Out-Null
+			# New-Item -Path "$report_folder/$_/fis" -ItemType "directory" -ErrorAction Ignore | Out-Null
 			$data_type = $_
-			$fis[$data_type].get_keys() | % {
-				$fis[$data_type][$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$data_type/fis/$_.json" | Out-Null
-			}
+			$fis[$data_type] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$data_type/fis.json" | Out-Null
 		}
 		Remove-Variable $fis
 		#--- End FI Inventory Collection ---#
@@ -689,10 +679,13 @@ function Generate_Health_Check
 		
 		#--- Initialize array variable for storing Chassis data ---#
 		$all_chassis = @{
-			inventory = @{}
-			faults = @{}
-			stats = @{}
+			inventory = @()
+			faults = @()
+			stats = @()
 		}
+		$ucs_domain.inventory.chassis_count = 0
+		$ucs_domain.inventory.slots_used = 0
+		$ucs_domain.inventory.slots_available = 0
 		#--- Iterate through chassis inventory and grab relevant data ---#
 		Start-UcsTransaction -Ucs $handle
 		Get-UcsChassis -Ucs $handle | % {
@@ -701,6 +694,7 @@ function Generate_Health_Check
 			#--- Hash variable for storing current chassis data ---#
 			$chassisHash = @{}
 			$chassisHash.Dn = $chassis.Dn
+			$chassisHash.Ucs = $chassis.Ucs
 			$chassisHash.Id = $chassis.Id
 			$chassisHash.Model = $chassis.Model
 			$chassisHash.Status = $chassis.OperState
@@ -709,14 +703,14 @@ function Generate_Health_Check
 			$chassisHash.Thermal = $chassis.Thermal
 			$chassisHash.Serial = $chassis.Serial
 			$chassisHash.Blades = @()
-			$meta = @{
-				rn = $chassis.Rn
-				dn = $chassis.Dn
-				filename = $chassis.Rn
-			}
-			$report_meta.chassis.Add($meta) | Out-Null
-			$all_chassis.faults[$meta.filename] = $chassis | Get-UcsFault
-			$all_chassis.stats[$meta.filename] = $chassis | Get-UcsStatistics
+			# $meta = @{
+			# 	rn = $chassis.Rn
+			# 	dn = $chassis.Dn
+			# 	filename = $chassis.Rn
+			# }
+			# $report_meta.chassis.Add($meta) | Out-Null
+			$all_chassis.faults += $chassis | Get-UcsFault
+			$all_chassis.stats += $chassis | Get-UcsStatistics
 
 			#--- Initialize chassis used slot count to 0 ---#
 			$slotCount = 0
@@ -728,7 +722,7 @@ function Generate_Health_Check
 				$bladeHash.SlotId = $_.SlotId
 				$bladeHash.Service_Profile = $_.AssignedToDn
 				#--- Get width of blade and convert to slot count ---#
-				$bladeHash.Width = [math]::floor(((Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentPhysicalDef -Filter "Dn -ilike *$($_.Model)*").Width)/8)
+				$bladeHash.Width = [math]::floor(((Get-UcsEquipmentPhysicalDef -Filter "Dn -ilike *$($_.Model)*").Width)/8)
 				#--- Increment used slot count by current blade width ---#
 				$slotCount += $bladeHash.Width
 				$chassisHash.Blades += $bladeHash
@@ -743,15 +737,18 @@ function Generate_Health_Check
 			$chassisHash.Power_Redundancy = ($chassis | Get-UcsComputePsuControl | Select Redundancy).Redundancy
 			
 			#--- Add chassis to domain hash variable ---#
-			$all_chassis.inventory[$meta.filename] = $chassisHash
+			$all_chassis.inventory += $chassisHash
+			$ucs_domain.inventory.chassis_count += 1
+			$ucs_domain.inventory.slots_used += $chassisHash.SlotsUsed
+			$ucs_domain.inventory.slots_available += $chassisHash.SlotsAvailable
 		}
+
+		$ucs_domain.inventory.slots_used
+
 		Complete-UcsTransaction -Ucs $handle
 		$all_chassis.get_keys() | % {
-			New-Item -Path "$report_folder/$_/chassis" -ItemType "directory" -ErrorAction Ignore | Out-Null
 			$data_type = $_
-			$all_chassis[$data_type].get_keys() | % {
-				$all_chassis[$data_type][$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$data_type/chassis/$_.json" | Out-Null
-			}
+			$all_chassis[$data_type] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$data_type/chassis.json" | Out-Null
 		}
 		Remove-Variable $all_chassis
 		#--- End Chassis Inventory Collection ---#
@@ -777,6 +774,7 @@ function Generate_Health_Check
 			Get-UcsIom -Ucs $handle | Select-Object | % {
 				$iom = $_
 				$iomHash = @{}
+				$iomHash.Ucs = $iom.Ucs
 				$iomHash.Dn = $iom.Dn
 				$iomHash.Chassis = $iom.ChassisId
 				$iomHash.Fabric_Id = $iom.SwitchId
@@ -786,11 +784,13 @@ function Generate_Health_Check
 					filename = $iom.Dn.replace("/", "_")
 				}
 				$report_meta.ioms.Add($meta) | Out-Null
-				$all_ioms.faults[$meta.filename] = $iom | Get-UcsFault
-				$all_ioms.stats[$meta.filename] = $iom | Get-UcsStatistics
+				# $all_ioms.faults[$meta.filename] = $iom | Get-UcsFault
+				# $all_ioms.stats[$meta.filename] = $iom | Get-UcsStatistics
+				$all_ioms.faults += $iom | Get-UcsFault
+				$all_ioms.stats += $iom | Get-UcsStatistics
 				
 				#--- Get common name of IOM model and format for viewing ---#
-				$iomHash.Model = (Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentManufacturingDef -Ucs $handle -Filter "Sku -cmatch $($iom.Model)").Name -replace "Cisco UCS ", ""
+				$iomHash.Model = ($ManufacturingDef | ? {$_.Sku -cmatch "$($iom.Model)"}).Name -replace "Cisco UCS ", ""
 				$iomHash.Serial = $iom.Serial
 				
 				#--- Get the IOM uplink port channel name if configured ---#
@@ -838,1482 +838,1549 @@ function Generate_Health_Check
 			}
 			Complete-UcsTransaction -Ucs $handle
 			$all_ioms.get_keys() | % {
-				New-Item -Path "$report_folder/$_/ioms" -ItemType "directory" -ErrorAction Ignore | Out-Null
+				# New-Item -Path "$report_folder/$_/ioms" -ItemType "directory" -ErrorAction Ignore | Out-Null
 				$data_type = $_
-				$all_ioms[$data_type].get_keys() | % {
-					$all_ioms[$data_type][$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$data_type/ioms/$_.json"
-				}
+				$all_ioms[$data_type] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$data_type/ioms.json"
 			}
 			Remove-Variable $all_ioms
 		}
-		$Process_Hash.Meta.ucs_domains[$domain] = $report_meta
+		$ucs_domain.get_keys() | % {
+			# New-Item -Path "$report_folder/$_/system" -ItemType "directory" -ErrorAction Ignore | Out-Null
+			$ucs_domain[$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$_/ucsm.json" | Out-Null
+		}
 		#--- End IOM Inventory Collection ---#
 		
-		# #--- Start Blade Inventory Collection ---#
+		#--- Start Blade Inventory Collection ---#
 		
-		# #--- Get all memory and vif data for future iteration ---#
-		# $memoryArray = Get-UcsMemoryUnit -Ucs $handle
-		# $paths = Get-UcsFabricPathEp -Ucs $handle
+		#--- Get all memory and vif data for future iteration ---#
+		$paths = Get-UcsFabricPathEp -Ucs $handle
 		
-		# #--- Set progress of current job ---#
-		# $Process_Hash.Progress[$domain] = 36
+		#--- Set progress of current job ---#
+		$Process_Hash.Progress[$domain] = 36
 		
-		# #--- Initialize array for storing blade data ---#
-		# $DomainHash.Inventory.Blades = @()
+		#--- Initialize array for storing blade data ---#
+		$DomainHash.Inventory.Blades = @()
+		$all_blades = @{
+			inventory = @()
+			faults = @()
+			stats = @()
+		}
+		$all_memory = @{
+			inventory = @()
+		}
+		$all_adapters = @{
+			inventory = @()
+		}
+		#--- Iterate through each blade and grab relevant data ---#	
+		Get-UcsBlade -Ucs $handle | % {
+			#--- Store current pipe variable to local variable ---#
+			$blade = $_
+			#--- Hash variable for storing current blade data ---#
+			$bladeHash = @{}
 			
-		# #--- Iterate through each blade and grab relevant data ---#	
-		# Get-UcsBlade -Ucs $handle | % {
-		# 	#--- Store current pipe variable to local variable ---#
-		# 	$blade = $_
-		# 	#--- Hash variable for storing current blade data ---#
-		# 	$bladeHash = @{}
+			$bladeHash.Dn = $blade.Dn
+			$bladeHash.Ucs = $blade.Ucs
+			$bladeHash.Status = $blade.OperState
+			$bladeHash.Chassis = $blade.ChassisId
+			$bladeHash.Slot = $blade.SlotId
+			($bladeHash.Model,$bladeHash.Model_Description) = $ManufacturingDef | ? {$_.Sku -ieq "$($blade.Model)"} | Select Name,Description | % {($_.Name -replace "Cisco UCS ", ""),$_.Description}
+			$bladeHash.Serial = $blade.Serial
+			$bladeHash.Uuid = $blade.Uuid
+			$bladeHash.UsrLbl = $blade.UsrLbl
+			$bladeHash.Name = $blade.Name
+			$bladeHash.Service_Profile = $blade.AssignedToDn
+			$all_blades.faults += $blade | Get-UcsFault
+			$all_blades.stats += $blade | Get-UcsStatistics
 			
-		# 	$bladeHash.Dn = $blade.Dn
-		# 	$bladeHash.Status = $blade.OperState
-		# 	$bladeHash.Chassis = $blade.ChassisId
-		# 	$bladeHash.Slot = $blade.SlotId
-		# 	($bladeHash.Model,$bladeHash.Model_Description) = Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentManufacturingDef -Ucs $handle -Filter "Sku -ieq $($blade.Model)" | Select Name,Description | % {($_.Name -replace "Cisco UCS ", ""),$_.Description}
-		# 	$bladeHash.Serial = $blade.Serial
-		# 	$bladeHash.Uuid = $blade.Uuid
-		# 	$bladeHash.UsrLbl = $blade.UsrLbl
-		# 	$bladeHash.Name = $blade.Name
-		# 	$bladeHash.Service_Profile = $blade.AssignedToDn
+			#--- If blade doesn't have a service profile set profile name to Unassociated ---#
+			if(!($bladeHash.Service_Profile))
+			{
+				$bladeHash.Service_Profile = "Unassociated"
+			}
+			#--- Get blade child object for future iteration ---#
+			$childTargets = $blade | Get-UcsChild | where {$_.Rn -ieq "bios" -or $_.Rn -ieq "mgmt" -or $_.Rn -ieq "board"} | get-ucschild
 			
-		# 	#--- If blade doesn't have a service profile set profile name to Unassociated ---#
-		# 	if(!($bladeHash.Service_Profile))
-		# 	{
-		# 		$bladeHash.Service_Profile = "Unassociated"
-		# 	}
-		# 	#--- Get blade child object for future iteration ---#
-		# 	$childTargets = $blade | Get-UcsChild | where {$_.Rn -ieq "bios" -or $_.Rn -ieq "mgmt" -or $_.Rn -ieq "board"} | get-ucschild
+			#--- Get blade CPU data ---#
+			$cpu = ($childTargets | where {$_.Rn -match "cpu" -and $_.Model -ne ""} | Select-Object -first 1).Model
+			#--- Get CPU common name and format text ---#
+			$bladeHash.CPU_Model = '(' + $blade.NumOfCpus + ') ' + ($cpu.Substring(([regex]::match($cpu,'CPU ').Index) + ([regex]::match($cpu,'CPU ').Length))).Replace(" ","")
+			$bladeHash.CPU_Cores = $blade.NumOfCores
+			$bladeHash.CPU_Threads = $blade.NumOfThreads
+			#--- Format available memory in GB ---#
+			$bladeHash.Memory_Available = $blade.AvailableMemory/1024
+			$bladeHash.Memory_Total = $blade.TotalMemory/1024
+			$bladeHash.Memory_Speed = $blade.MemorySpeed
+			$bladeHash.BIOS = (($childTargets | where {$_.Type -eq "blade-bios"}).Version -replace ('(?!(.*[.]){2}).*',"")).TrimEnd('.')
+			$bladeHash.CIMC = ($childTargets | where {$_.Type -eq "blade-controller" -and $_.Deployment -ieq "system"}).Version
+			$bladeHash.Board_Controller = ($childTargets | where {$_.Type -eq "board-controller"}).Version
 			
-		# 	#--- Get blade CPU data ---#
-		# 	$cpu = ($childTargets | where {$_.Rn -match "cpu" -and $_.Model -ne ""} | Select-Object -first 1).Model
-		# 	#--- Get CPU common name and format text ---#
-		# 	$bladeHash.CPU_Model = '(' + $blade.NumOfCpus + ') ' + ($cpu.Substring(([regex]::match($cpu,'CPU ').Index) + ([regex]::match($cpu,'CPU ').Length))).Replace(" ","")
-		# 	$bladeHash.CPU_Cores = $blade.NumOfCores
-		# 	$bladeHash.CPU_Threads = $blade.NumOfThreads
-		# 	#--- Format available memory in GB ---#
-		# 	$bladeHash.Memory = $blade.AvailableMemory/1024
-		# 	$bladeHash.Memory_Speed = $blade.MemorySpeed
-		# 	$bladeHash.BIOS = (($childTargets | where {$_.Type -eq "blade-bios"}).Version -replace ('(?!(.*[.]){2}).*',"")).TrimEnd('.')
-		# 	$bladeHash.CIMC = ($childTargets | where {$_.Type -eq "blade-controller" -and $_.Deployment -ieq "system"}).Version
-		# 	$bladeHash.Board_Controller = ($childTargets | where {$_.Type -eq "board-controller"}).Version
+			#--- Set Board Controller model to N/A if not present ---#
+			if(!($bladeHash.Board_Controller))
+			{
+				$bladeHash.Board_Controller = 'N/A'
+			}
+			#--- Array variable for storing blade adapter data ---#
+			$bladeHash.Adapters = @()
 			
-		# 	#--- Set Board Controller model to N/A if not present ---#
-		# 	if(!($bladeHash.Board_Controller))
-		# 	{
-		# 		$bladeHash.Board_Controller = 'N/A'
-		# 	}
-		# 	#--- Array variable for storing blade adapter data ---#
-		# 	$bladeHash.Adapters = @()
+			#--- Iterate through each blade adapter and grab relevant data ---#
+			$blade | Get-UcsAdaptorUnit | % {
+				#--- Hash variable for storing current adapter data ---#
+				$adapterHash = @{}
+				#--- Get common name of adapter and format string ---#
+				$adapter = $_
+				$adapterHash.Dn = $adapter.Dn
+				$adapterHash.Ucs = $adapter.Ucs
+				$adapterHash.Model = ($ManufacturingDef | ? {$_.Sku -ieq "$($adapter.Model)"}).Name -replace "Cisco UCS ", ""
+				$adapterHash.Name = 'Adaptor-' + $adapter.Id
+				$adapterHash.Slot = $adapter.Id
+				$adapterHash.Fw = ($adapter | Get-UcsMgmtController | Get-UcsFirmwareRunning -Deployment system).Version
+				$adapterHash.Serial = $adapter.Serial
+				#--- Add current adapter hash to blade adapter array ---#
+				$all_adapters.inventory += $adapterHash
+			}
 			
-		# 	#--- Iterate through each blade adapter and grab relevant data ---#
-		# 	$blade | Get-UcsAdaptorUnit | % {
-		# 		#--- Hash variable for storing current adapter data ---#
-		# 		$adapterHash = @{}
-		# 		#--- Get common name of adapter and format string ---#
-		# 		$adapterHash.Model = (Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentManufacturingDef -Ucs $handle -Filter "Sku -ieq $($_.Model)").Name -replace "Cisco UCS ", ""
-		# 		$adapterHash.Name = 'Adaptor-' + $_.Id
-		# 		$adapterHash.Slot = $_.Id
-		# 		$adapterHash.Fw = ($_ | Get-UcsMgmtController | Get-UcsFirmwareRunning -Deployment system).Version
-		# 		$adapterHash.Serial = $_.Serial
-		# 		#--- Add current adapter hash to blade adapter array ---#
-		# 		$bladeHash.Adapters += $adapterHash
-		# 	}
+			#--- Array variable for storing blade memory data ---#
+			#--- Iterage through all memory tied to current server and grab relevant data ---#
+			$computeBoard = $blade | Get-UcsComputeBoard
+			$memoryArray = $computeBoard | Get-UcsMemoryArray
+			$bladeHash.Memory_Slots_Max = $memoryArray.MaxDevices -as [int]
+			$bladeHash.Memory_Slots_Populated = $memoryArray.Populated -as [int]
+			$memoryArray | Get-UcsMemoryUnit | Sort-Object {($_.Id) -as [int]} | % {
+				#--- Hash variable for storing current memory data ---#
+				$memHash = @{}
+				$memoryUnit = $_
+				$memHash.Dn = $memoryUnit.Dn
+				$memHash.Ucs = $memoryUnit.Ucs
+				$memHash.Name = "Memory " + $memoryUnit.Id
+				$memHash.Location = $memoryUnit.Location
+				#--- Format DIMM capacity in GB ---#
+				$memHash.Capacity = ($memoryUnit.Capacity)/1024
+				$memHash.Clock = $memoryUnit.Clock
+				$memHash.Type = $memoryUnit.Type
+				$memHash.Model = $memoryUnit.Model
+				$memoryCapabilities = $ManufacturingDef | ? {$_.Dn -match "manufacturer-$($memoryUnit.Vendor)-model-$($memoryUnit.Model)-revision-$($memoryUnit.Revision)"}
+				$memHash.Description = $memoryCapabilities.Description
+				$memHash.Vendor = $memoryUnit.Vendor
+				$memHash.VendorDescription = $memoryCapabilities.OemName
+				$memHash.Pid = $memoryCapabilities.Pid
+				$memHash.Vid = $memoryCapabilities.Vid
+				$memHash.Sku = $memoryCapabilities.Sku
+				$memHash.PartNumber = $memoryCapabilities.PartNumber
+				$all_memory.inventory += $memHash
+			}
+			#--- Array variable for storing local storage configuration data ---#
+			$bladeHash.Storage = @()
 			
-		# 	#--- Array variable for storing blade memory data ---#
-		# 	$bladeHash.Memory_Array = @()
-		# 	#--- Iterage through all memory tied to current server and grab relevant data ---#
-		# 	$memoryArray | ? {$_.Dn -match $blade.Dn} | Select Id,Location,Capacity,Clock | Sort-Object {($_.Id) -as [int]} | % {
-		# 		#--- Hash variable for storing current memory data ---#
-		# 		$memHash = @{}
-		# 		$memHash.Name = "Memory " + $_.Id
-		# 		$memHash.Location = $_.Location
-		# 		#--- Format DIMM capacity in GB ---#
-		# 		$memHash.Capacity = ($_.Capacity)/1024
-		# 		$memHash.Clock = $_.Clock
-		# 		$bladeHash.Memory_Array += $memHash
-		# 	}
-		# 	#--- Array variable for storing local storage configuration data ---#
-		# 	$bladeHash.Storage = @()
-			
-		# 	#--- Iterate through each blade storage controller and grab relevant data ---#
-		# 	$blade | Get-UcsComputeBoard | Get-UcsStorageController | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$controller = $_
-		# 		#--- Hash variable for storing current storage controller data ---#
-		# 		$controllerHash = @{}
+			#--- Iterate through each blade storage controller and grab relevant data ---#
+			$computeBoard | Get-UcsStorageController | % {
+				#--- Store current pipe variable to local variable ---#
+				$controller = $_
+				#--- Hash variable for storing current storage controller data ---#
+				$controllerHash = @{}
 				
-		# 		#--- Grab relevant controller data and store to respective controllerHash variable ---#
-		# 		$controllerHash.Id,$controllerHash.Vendor,$controllerHash.Revision,$controllerHash.RaidSupport,$controllerHash.PciAddr,$controllerHash.RebuildRate,$controllerHash.Model,$controllerHash.Serial,$controllerHash.ControllerStatus = $controller.Id,$controller.Vendor,$controller.HwRevision,$controller.RaidSupport,$controller.PciAddr,$controller.XtraProperty.RebuildRate,$controller.Model,$controller.Serial,$controller.XtraProperty.ControllerStatus
-		# 		$controllerHash.Disk_Count = 0
-		# 		#--- Array variable for storing controller disks ---#
-		# 		$controllerHash.Disks = @()
-		# 		#--- Iterate through each local disk and grab relevant data ---#
-		# 		$controller | Get-UcsStorageLocalDisk -Presence "equipped" | % {
-		# 			#--- Store current pipe variable to local variable ---#
-		# 			$disk = $_
-		# 			#--- Hash variable for storing current disk data ---#
-		# 			$diskHash = @{}
-		# 			#--- Get common name of disk model and format text ---#
-		# 			$equipmentDef = Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentManufacturingDef -Ucs $handle -Filter "OemPartNumber -ieq $($disk.Model)"
-		# 			#--- Get detailed disk capability data ---#
-		# 			$capabilities = Get-UcsEquipmentLocalDiskDef -Ucs $handle -Filter "Dn -cmatch $($disk.Model)"
-		# 			$diskHash.Id = $disk.Id
-		# 			$diskHash.Pid = $equipmentDef.Pid
-		# 			$diskHash.Vendor = $disk.Vendor
-		# 			$diskHash.Vid = $equipmentDef.Vid
-		# 			$diskHash.Serial = $disk.Serial
-		# 			$diskHash.Product_Name = $equipmentDef.Name
-		# 			$diskHash.Drive_State = $disk.XtraProperty.DiskState
-		# 			$diskHash.Power_State = $disk.XtraProperty.PowerState
-		# 			#--- Format disk size to whole GB value ---#
-		# 			$diskHash.Size = "{0:N2}" -f ($disk.Size/1024)
-		# 			$diskHash.Link_Speed = $disk.XtraProperty.LinkSpeed
-		# 			$diskHash.Blocks = $disk.NumberOfBlocks
-		# 			$diskHash.Block_Size = $disk.BlockSize
-		# 			$diskHash.Technology = $capabilities.Technology
-		# 			$diskHash.Avg_Seek_Time = $capabilities.SeekAverageReadWrite
-		# 			$diskHash.Track_To_Seek = $capabilities.SeekTrackToTrackReadWrite
-		# 			$diskHash.Operability = $disk.Operability
-		# 			$diskHash.Presence = $disk.Presence
-		# 			$diskHash.Running_Version = ($disk | Get-UcsFirmwareRunning).Version
-		# 			$controllerHash.Disk_Count += 1
-		# 			#--- Add current disk hash to controller hash disk array ---#
-		# 			$controllerHash.Disks += $diskHash
-		# 		}
-		# 		#--- Add controller hash variable to current blade hash storage array ---#
-		# 		$bladeHash.Storage += $controllerHash
-		# 	}
+				#--- Grab relevant controller data and store to respective controllerHash variable ---#
+				$controllerHash.Id,$controllerHash.Vendor,$controllerHash.Revision,$controllerHash.RaidSupport,$controllerHash.PciAddr,$controllerHash.RebuildRate,$controllerHash.Model,$controllerHash.Serial,$controllerHash.ControllerStatus = $controller.Id,$controller.Vendor,$controller.HwRevision,$controller.RaidSupport,$controller.PciAddr,$controller.XtraProperty.RebuildRate,$controller.Model,$controller.Serial,$controller.XtraProperty.ControllerStatus
+				$controllerHash.Disk_Count = 0
+				#--- Array variable for storing controller disks ---#
+				$controllerHash.Disks = @()
+				#--- Iterate through each local disk and grab relevant data ---#
+				$controller | Get-UcsStorageLocalDisk -Presence "equipped" | % {
+					#--- Store current pipe variable to local variable ---#
+					$disk = $_
+					#--- Hash variable for storing current disk data ---#
+					$diskHash = @{}
+					#--- Get common name of disk model and format text ---#
+					$equipmentDef = $ManufacturingDef | ? {$_.OemPartNumber -ieq "$($disk.Model)"}
+					#--- Get detailed disk capability data ---#
+					$capabilities = Get-UcsEquipmentLocalDiskDef -Ucs $handle -Filter "Dn -cmatch $($disk.Model)"
+					$diskHash.Id = $disk.Id
+					$diskHash.Pid = $equipmentDef.Pid
+					$diskHash.Vendor = $disk.Vendor
+					$diskHash.Vid = $equipmentDef.Vid
+					$diskHash.Serial = $disk.Serial
+					$diskHash.Product_Name = $equipmentDef.Name
+					$diskHash.Drive_State = $disk.XtraProperty.DiskState
+					$diskHash.Power_State = $disk.XtraProperty.PowerState
+					#--- Format disk size to whole GB value ---#
+					$diskHash.Size = "{0:N2}" -f ($disk.Size/1024)
+					$diskHash.Link_Speed = $disk.XtraProperty.LinkSpeed
+					$diskHash.Blocks = $disk.NumberOfBlocks
+					$diskHash.Block_Size = $disk.BlockSize
+					$diskHash.Technology = $capabilities.Technology
+					$diskHash.Avg_Seek_Time = $capabilities.SeekAverageReadWrite
+					$diskHash.Track_To_Seek = $capabilities.SeekTrackToTrackReadWrite
+					$diskHash.Operability = $disk.Operability
+					$diskHash.Presence = $disk.Presence
+					$diskHash.Running_Version = ($disk | Get-UcsFirmwareRunning).Version
+					$controllerHash.Disk_Count += 1
+					#--- Add current disk hash to controller hash disk array ---#
+					$controllerHash.Disks += $diskHash
+				}
+				#--- Add controller hash variable to current blade hash storage array ---#
+				$bladeHash.Storage += $controllerHash
+			}
 			
-		# 	#--- Array variable for storing VIF information for current blade ---#
-		# 	$bladeHash.VIFs = @()
-		# 	#--- Grab all circuits that match the current blade DN and are active or link-down ---#
-		# 	$circuits = Get-UcsDcxVc -Ucs $handle -Filter "Dn -cmatch $($blade.Dn) -and (OperState -cmatch active -or OperState -cmatch link-down)" | Select Dn,Id,OperBorderPortId,OperBorderSlotId,SwitchId,Vnic,LinkState
-		# 	#--- Iterate through all paths of type "mux-fabric" for the current blade ---#
-		# 	$paths | ? {$_.Dn -Match $blade.Dn -and $_.CType -match "mux-fabric" -and $_.CType -notmatch "mux-fabric(.*)?[-]"} | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$vif = $_
-		# 		#--- Hash variable for storing current VIF data ---#
-		# 		$vifHash = @{}
+			#--- Array variable for storing VIF information for current blade ---#
+			$bladeHash.VIFs = @()
+			#--- Grab all circuits that match the current blade DN and are active or link-down ---#
+			$circuits = Get-UcsDcxVc -Ucs $handle -Filter "Dn -cmatch $($blade.Dn) -and (OperState -cmatch active -or OperState -cmatch link-down)" | Select Dn,Id,OperBorderPortId,OperBorderSlotId,SwitchId,Vnic,LinkState
+			#--- Iterate through all paths of type "mux-fabric" for the current blade ---#
+			$paths | ? {$_.Dn -Match $blade.Dn -and $_.CType -match "mux-fabric" -and $_.CType -notmatch "mux-fabric(.*)?[-]"} | % {
+				#--- Store current pipe variable to local variable ---#
+				$vif = $_
+				#--- Hash variable for storing current VIF data ---#
+				$vifHash = @{}
 				
-		# 		#--- The name of the current Path formatted to match the presentation in UCSM ---#
-		# 		$vifHash.Name = "Path " + $_.SwitchId + '/' + ($_.Dn | Select-String -pattern "(?<=path[-]).*(?=[/])")[0].Matches.Value
+				#--- The name of the current Path formatted to match the presentation in UCSM ---#
+				$vifHash.Name = "Path " + $_.SwitchId + '/' + ($_.Dn | Select-String -pattern "(?<=path[-]).*(?=[/])")[0].Matches.Value
 				
-		# 		#--- Gets peer port information filtered to the current path for adapter and fex host port ---#
-		# 		$vifPeers = $paths | ? {$_.EpDn -match ($vif.EpDn | Select-String -pattern ".*(?=(.*[/]){2})").Matches.Value -and $_.Dn -match ($vif.Dn | Select-String -pattern ".*(?=(.*[/]){3})").Matches.Value -and $_.Dn -ne $vif.Dn}									
-		# 		#--- If Adapter PortId is greater than 1000 then format string as a port channel ---#
-		# 		if($vifPeers[1].PeerPortId -gt 1000)
-		# 		{
-		# 			$vifHash.Adapter_Port = 'PC-' + $vifPeers[1].PeerPortId
-		# 		}
-		# 		#--- Else format in slot/port notation ---#
-		# 		else
-		# 		{
-		# 			$vifHash.Adapter_Port = "$($vifPeers[1].PeerSlotId)/$($vifPeers[1].PeerPortId)"
-		# 		}
-		# 		#--- If FEX PortId is greater than 1000 then format string as a port channel ---#
-		# 		if($vifPeers[0].PortId -gt 1000)
-		# 		{
-		# 			$vifHash.Fex_Host_Port = 'PC-' + $vifPeers[0].PortId
-		# 		}
-		# 		#--- Else format in chassis/slot/port notation ---#
-		# 		else
-		# 		{
-		# 			$vifHash.Fex_Host_Port = "$($vifPeers[0].ChassisId)/$($vifPeers[0].SlotId)/$($vifPeers[0].PortId)"
-		# 		}
-		# 		#--- If Network PortId is greater than 1000 then format string as a port channel ---#
-		# 		if($vif.PortId -gt 1000)
-		# 		{
-		# 			$vifHash.Fex_Network_Port = 'PC-' + $vif.PortId
-		# 		}
-		# 		#--- Else format in fabricId/slot/port notation ---#
-		# 		else
-		# 		{
-		# 			$vifHash.Fex_Network_Port = $vif.PortId
-		# 		}
-		# 		#--- Server Port for current path as formatted in UCSM ---#
-		# 		$vifHash.FI_Server_Port = "$($vif.SwitchId)/$($vif.PeerSlotId)/$($vif.PeerPortId)"
+				#--- Gets peer port information filtered to the current path for adapter and fex host port ---#
+				$vifPeers = $paths | ? {$_.EpDn -match ($vif.EpDn | Select-String -pattern ".*(?=(.*[/]){2})").Matches.Value -and $_.Dn -match ($vif.Dn | Select-String -pattern ".*(?=(.*[/]){3})").Matches.Value -and $_.Dn -ne $vif.Dn}									
+				#--- If Adapter PortId is greater than 1000 then format string as a port channel ---#
+				if($vifPeers[1].PeerPortId -gt 1000)
+				{
+					$vifHash.Adapter_Port = 'PC-' + $vifPeers[1].PeerPortId
+				}
+				#--- Else format in slot/port notation ---#
+				else
+				{
+					$vifHash.Adapter_Port = "$($vifPeers[1].PeerSlotId)/$($vifPeers[1].PeerPortId)"
+				}
+				#--- If FEX PortId is greater than 1000 then format string as a port channel ---#
+				if($vifPeers[0].PortId -gt 1000)
+				{
+					$vifHash.Fex_Host_Port = 'PC-' + $vifPeers[0].PortId
+				}
+				#--- Else format in chassis/slot/port notation ---#
+				else
+				{
+					$vifHash.Fex_Host_Port = "$($vifPeers[0].ChassisId)/$($vifPeers[0].SlotId)/$($vifPeers[0].PortId)"
+				}
+				#--- If Network PortId is greater than 1000 then format string as a port channel ---#
+				if($vif.PortId -gt 1000)
+				{
+					$vifHash.Fex_Network_Port = 'PC-' + $vif.PortId
+				}
+				#--- Else format in fabricId/slot/port notation ---#
+				else
+				{
+					$vifHash.Fex_Network_Port = $vif.PortId
+				}
+				#--- Server Port for current path as formatted in UCSM ---#
+				$vifHash.FI_Server_Port = "$($vif.SwitchId)/$($vif.PeerSlotId)/$($vif.PeerPortId)"
 				
-		# 		#--- Array variable for storing virtual circuit data ---#
-		# 		$vifHash.Circuits = @()
-		# 		#--- Iterate through all circuits for the current vif ---#
-		# 		$circuits | ? {$_.Dn -cmatch ($vif.Dn | Select-String -pattern ".*(?<=[/])")[0].Matches.Value} | Select Id,vNic,OperBorderPortId,OperBorderSlotId,LinkState,SwitchId | % {
-		# 			#--- Hash variable for storing current circuit data ---#
-		# 			$vcHash = @{}
-		# 			$vcHash.Name = 'Virtual Circuit ' + $_.Id
-		# 			$vcHash.vNic = $_.vNic
-		# 			$vcHash.Link_State = $_.LinkState
-		# 			#--- Check if the current circuit is pinned to a PC uplink ---#
-		# 			if($_.OperBorderPortId -gt 0 -and $_.OperBorderSlotId -eq 0)
-		# 			{
-		# 				$vcHash.FI_Uplink = "$($_.SwitchId)/PC - $($_.OperBorderPortId)"
-		# 			}
-		# 			#--- Check if the current circuit is unpinned ---#
-		# 			elseif($_.OperBorderPortId -eq 0 -and $_.OperBorderSlotId -eq 0)
-		# 			{
-		# 				$vcHash.FI_Uplink = "unpinned"
-		# 			}
-		# 			#--- Assume that the circuit is pinned to a single uplink port ---#
-		# 			else
-		# 			{
-		# 				$vcHash.FI_Uplink = "$($_.SwitchId)/$($_.OperBorderSlotId)/$($_.OperBorderPortId)"
-		# 			}
-		# 			#--- Add current circuit data to loop array variable ---#
-		# 			$vifHash.Circuits += $vcHash
-		# 		}
-		# 		#--- Add vif data to blade hash ---#
-		# 		$bladeHash.VIFs += $vifHash
-		# 	}
+				#--- Array variable for storing virtual circuit data ---#
+				$vifHash.Circuits = @()
+				#--- Iterate through all circuits for the current vif ---#
+				$circuits | ? {$_.Dn -cmatch ($vif.Dn | Select-String -pattern ".*(?<=[/])")[0].Matches.Value} | Select Id,vNic,OperBorderPortId,OperBorderSlotId,LinkState,SwitchId | % {
+					#--- Hash variable for storing current circuit data ---#
+					$vcHash = @{}
+					$vcHash.Name = 'Virtual Circuit ' + $_.Id
+					$vcHash.vNic = $_.vNic
+					$vcHash.Link_State = $_.LinkState
+					#--- Check if the current circuit is pinned to a PC uplink ---#
+					if($_.OperBorderPortId -gt 0 -and $_.OperBorderSlotId -eq 0)
+					{
+						$vcHash.FI_Uplink = "$($_.SwitchId)/PC - $($_.OperBorderPortId)"
+					}
+					#--- Check if the current circuit is unpinned ---#
+					elseif($_.OperBorderPortId -eq 0 -and $_.OperBorderSlotId -eq 0)
+					{
+						$vcHash.FI_Uplink = "unpinned"
+					}
+					#--- Assume that the circuit is pinned to a single uplink port ---#
+					else
+					{
+						$vcHash.FI_Uplink = "$($_.SwitchId)/$($_.OperBorderSlotId)/$($_.OperBorderPortId)"
+					}
+					#--- Add current circuit data to loop array variable ---#
+					$vifHash.Circuits += $vcHash
+				}
+				#--- Add vif data to blade hash ---#
+				$bladeHash.VIFs += $vifHash
+			}
 			
-		# 	#--- Get the configured boot definition of the current blade ---#
+			#--- Get the configured boot definition of the current blade ---#
 			
-		# 	#--- Array variable for storing boot order data ---#
-		# 	$bladeHash.Configured_Boot_Order = @()
-		# 	#--- Iterate through all boot parameters for current blade ---#
-		# 	$blade | Get-UcsBootDefinition | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$policy = $_
-		# 		#--- Hash variable for storing current boot data ---#
-		# 		$bootHash = @{}
-		# 		#--- Grab multiple boot policy data points from current policy ---#
-		# 		($bootHash.Dn,$bootHash.BootMode,$bootHash.EnforceVnicName,$bootHash.Name,$bootHash.RebootOnUpdate,$bootHash.Owner) = $policy.Dn,$policy.BootMode,$policy.EnforceVnicName,$policy.Name,$policy.RebootOnUpdate,$policy.Owner
+			#--- Array variable for storing boot order data ---#
+			$bladeHash.Configured_Boot_Order = @()
+			#--- Iterate through all boot parameters for current blade ---#
+			$blade | Get-UcsBootDefinition | % {
+				#--- Store current pipe variable to local variable ---#
+				$policy = $_
+				#--- Hash variable for storing current boot data ---#
+				$bootHash = @{}
+				#--- Grab multiple boot policy data points from current policy ---#
+				($bootHash.Dn,$bootHash.BootMode,$bootHash.EnforceVnicName,$bootHash.Name,$bootHash.RebootOnUpdate,$bootHash.Owner) = $policy.Dn,$policy.BootMode,$policy.EnforceVnicName,$policy.Name,$policy.RebootOnUpdate,$policy.Owner
 			
-		# 		#--- Array variable for string boot policy entries ---#
-		# 		$bootHash.Entries = @()
-		# 		#--- Get all child objects of the current policy and sort by boot order ---#
-		# 		$policy | Get-UcsChild | Sort-Object Order | % {
-		# 			#--- Store current pipe variable to local variable ---#
-		# 			$entry = $_
-		# 			#===========================================================#
-		# 			#	Switch statement using the device type as the target	#
-		# 			#															#
-		# 			#	Variable Definitions:									#
-		# 			#		Level1 - VNIC, Order								#
-		# 			#		Level2 - Type, VNIC Name							#
-		# 			#		Level3 - Lun, Type, WWN								#
-		# 			#===========================================================#
-		# 			Switch ($entry.Type)
-		# 			{
-		# 				#--- Matches either local media or SAN storage ---#
-		# 				'storage' {
-		# 					#--- Get child data of boot entry for more detailed information ---#
-		# 					$entry | Get-UcsChild | Sort-Object Type | % {
-		# 						#--- Hash variable for storing current boot entry data ---#
-		# 						$entryHash = @{}
-		# 						#--- Checks if current entry is a SAN target ---#
-		# 						if($_.Rn -match "san")
-		# 						{
-		# 							#--- Grab Level1 data ---#
-		# 							$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 							#--- Array for storing Level2 data ---#
-		# 							$entryHash.Level2 = @()
-		# 							#--- Hash variable for storing current san entry data ---#
-		# 							$sanHash = @{}
-		# 							$sanHash.Type = $_.Type
-		# 							$sanHash.VnicName = $_.VnicName
-		# 							#--- Array variable for storing Level3 data ---#
-		# 							$sanHash.Level3 = @()
-		# 							#--- Get Level3 data from child object ---#
-		# 							$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
-		# 							#--- Add sanHash to Level2 array variable
-		# 							$entryHash.Level2 += $sanHash
-		# 							#--- Add current boot entry data to boot hash ---#
-		# 							$bootHash.Entries += $entryHash
-		# 						}
-		# 						#--- Checks if current entry is a local storage target ---#
-		# 						elseif($_.Rn -match "local-storage")
-		# 						{
-		# 							#--- Selects Level1 data ---#
-		# 							$_ | Get-UcsChild | Sort-Object Order | % {
-		# 								$entryHash = @{}
-		# 								$entryHash.Level1 = $_ | Select-Object Type,Order
-		# 								$bootHash.Entries += $entryHash
-		# 							}
-		# 						}									
-		# 					}
-		# 				}
-		# 				#--- Matches virtual media types ---#
-		# 				'virtual-media' {
-		# 					$entryHash = @{}
-		# 					#--- Get Level1 data plus Access type to determine device type ---#
-		# 					$entryHash.Level1 = $entry | Select-Object Type,Order,Access
-		# 					if ($entryHash.Level1.Access -match 'read-only')
-		# 					{
-		# 						$entryHash.Level1.Type = 'CD/DVD'
-		# 					}
-		# 					else
-		# 					{
-		# 						$entryHash.Level1.Type = 'Floppy'
-		# 					}
-		# 					$bootHash.Entries += $entryHash
-		# 				}
-		# 				#--- Matches lan boot types ---#
-		# 				'lan' {
-		# 					$entryHash = @{}
-		# 					$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 					$entryHash.Level2 = @()
-		# 					$entryHash.Level2 += $entry | Get-UcsChild | Select-Object VnicName,Type 
-		# 					$bootHash.Entries += $entryHash
-		# 				}
-		# 				#--- Matches SAN and iSCSI boot types ---#
-		# 				'san' {
-		# 					$entryHash = @{}
-		# 					#--- Grab Level1 data ---#
-		# 					$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 					$entryHash.Level2 = @()
-		# 					$entry | Get-UcsChild | Sort-Object Type | % {
-		# 						#--- Hash variable for storing current san entry data ---#
-		# 						$sanHash = @{}
-		# 						#--- Grab Level2 Data ---#
-		# 						$sanHash.Type = $_.Type
-		# 						$sanHash.VnicName = $_.VnicName
-		# 						#--- Array variable for storing Level3 data ---#
-		# 						$sanHash.Level3 = @()
-		# 						#--- Get Level3 data from child object ---#
-		# 						$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
-		# 						#--- Add sanHash to Level2 array variable
-		# 						$entryHash.Level2 += $sanHash
-		# 					}
-		# 					#--- Add current boot entry data to boot hash ---#
-		# 					$bootHash.Entries += $entryHash
-		# 				}
-		# 				'iscsi' {
-		# 					#--- Hash variable for storing iscsi boot entry data ---#
-		# 					$entryHash = @{}
-		# 					#--- Grab Level1 boot data ---#
-		# 					$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 					#--- Array variable for storing Level2 boot data ---#
-		# 					$entryHash.Level2 = @()
-		# 					#--- Get all iSCSI Level2 data from child objects ---#
-		# 					$entryHash.Level2 += $entry | Get-UcsChild | Sort-Object Type | Select-Object ISCSIVnicName,Type
-		# 					#--- Add current boot entry data to boot hash ---#
-		# 					$bootHash.Entries += $entryHash
-		# 				}
-		# 			}
-		# 		}
-		# 		#--- Sort all boot entries by Level1 Order ---#
-		# 		$bootHash.Entries = $bootHash.Entries | Sort-Object {$_.Level1.Order}
-		# 		#--- Store boot entries to configured boot order array ---#
-		# 		$bladeHash.Configured_Boot_Order += $bootHash
-		# 	}
+				#--- Array variable for string boot policy entries ---#
+				$bootHash.Entries = @()
+				#--- Get all child objects of the current policy and sort by boot order ---#
+				$policy | Get-UcsChild | Sort-Object Order | % {
+					#--- Store current pipe variable to local variable ---#
+					$entry = $_
+					#===========================================================#
+					#	Switch statement using the device type as the target	#
+					#															#
+					#	Variable Definitions:									#
+					#		Level1 - VNIC, Order								#
+					#		Level2 - Type, VNIC Name							#
+					#		Level3 - Lun, Type, WWN								#
+					#===========================================================#
+					Switch ($entry.Type)
+					{
+						#--- Matches either local media or SAN storage ---#
+						'storage' {
+							#--- Get child data of boot entry for more detailed information ---#
+							$entry | Get-UcsChild | Sort-Object Type | % {
+								#--- Hash variable for storing current boot entry data ---#
+								$entryHash = @{}
+								#--- Checks if current entry is a SAN target ---#
+								if($_.Rn -match "san")
+								{
+									#--- Grab Level1 data ---#
+									$entryHash.Level1 = $entry | Select-Object Type,Order
+									#--- Array for storing Level2 data ---#
+									$entryHash.Level2 = @()
+									#--- Hash variable for storing current san entry data ---#
+									$sanHash = @{}
+									$sanHash.Type = $_.Type
+									$sanHash.VnicName = $_.VnicName
+									#--- Array variable for storing Level3 data ---#
+									$sanHash.Level3 = @()
+									#--- Get Level3 data from child object ---#
+									$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
+									#--- Add sanHash to Level2 array variable
+									$entryHash.Level2 += $sanHash
+									#--- Add current boot entry data to boot hash ---#
+									$bootHash.Entries += $entryHash
+								}
+								#--- Checks if current entry is a local storage target ---#
+								elseif($_.Rn -match "local-storage")
+								{
+									#--- Selects Level1 data ---#
+									$_ | Get-UcsChild | Sort-Object Order | % {
+										$entryHash = @{}
+										$entryHash.Level1 = $_ | Select-Object Type,Order
+										$bootHash.Entries += $entryHash
+									}
+								}									
+							}
+						}
+						#--- Matches virtual media types ---#
+						'virtual-media' {
+							$entryHash = @{}
+							#--- Get Level1 data plus Access type to determine device type ---#
+							$entryHash.Level1 = $entry | Select-Object Type,Order,Access
+							if ($entryHash.Level1.Access -match 'read-only')
+							{
+								$entryHash.Level1.Type = 'CD/DVD'
+							}
+							else
+							{
+								$entryHash.Level1.Type = 'Floppy'
+							}
+							$bootHash.Entries += $entryHash
+						}
+						#--- Matches lan boot types ---#
+						'lan' {
+							$entryHash = @{}
+							$entryHash.Level1 = $entry | Select-Object Type,Order
+							$entryHash.Level2 = @()
+							$entryHash.Level2 += $entry | Get-UcsChild | Select-Object VnicName,Type 
+							$bootHash.Entries += $entryHash
+						}
+						#--- Matches SAN and iSCSI boot types ---#
+						'san' {
+							$entryHash = @{}
+							#--- Grab Level1 data ---#
+							$entryHash.Level1 = $entry | Select-Object Type,Order
+							$entryHash.Level2 = @()
+							$entry | Get-UcsChild | Sort-Object Type | % {
+								#--- Hash variable for storing current san entry data ---#
+								$sanHash = @{}
+								#--- Grab Level2 Data ---#
+								$sanHash.Type = $_.Type
+								$sanHash.VnicName = $_.VnicName
+								#--- Array variable for storing Level3 data ---#
+								$sanHash.Level3 = @()
+								#--- Get Level3 data from child object ---#
+								$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
+								#--- Add sanHash to Level2 array variable
+								$entryHash.Level2 += $sanHash
+							}
+							#--- Add current boot entry data to boot hash ---#
+							$bootHash.Entries += $entryHash
+						}
+						'iscsi' {
+							#--- Hash variable for storing iscsi boot entry data ---#
+							$entryHash = @{}
+							#--- Grab Level1 boot data ---#
+							$entryHash.Level1 = $entry | Select-Object Type,Order
+							#--- Array variable for storing Level2 boot data ---#
+							$entryHash.Level2 = @()
+							#--- Get all iSCSI Level2 data from child objects ---#
+							$entryHash.Level2 += $entry | Get-UcsChild | Sort-Object Type | Select-Object ISCSIVnicName,Type
+							#--- Add current boot entry data to boot hash ---#
+							$bootHash.Entries += $entryHash
+						}
+					}
+				}
+				#--- Sort all boot entries by Level1 Order ---#
+				$bootHash.Entries = $bootHash.Entries | Sort-Object {$_.Level1.Order}
+				#--- Store boot entries to configured boot order array ---#
+				$bladeHash.Configured_Boot_Order += $bootHash
+			}
 			
-		# 	#--- Grab actual boot order data from BIOS boot order table for current blade ---#
+			#--- Grab actual boot order data from BIOS boot order table for current blade ---#
 			
-		# 	#--- Array variable for storing boot entries ---#
-		# 	$bladeHash.Actual_Boot_Order = @()
-		# 	#--- Iterate through all boot entries ---#
-		# 	$blade | Get-UcsBiosUnit | Get-UcsBiosBOT | Get-UcsBiosBootDevGrp | Sort-Object Order | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$entry = $_
-		# 		#--- Hash variable for storing current entry data ---#
-		# 		$bootHash = @{}
-		# 		#--- Grab entry device type ---#
-		# 		$bootHash.Descr = $entry.Descr
-		# 		#--- Grab detailed information about current boot entry ---#
-		# 		$bootHash.Entries = @()
-		# 		$entry | Get-UcsBiosBootDev | % {
-		# 			#--- Formats Entry string like UCSM presentation ---#
-		# 			$bootHash.Entries += "($($_.Order)) $($_.Descr)"
-		# 		}
-		# 		#--- Add boot entry data to actual boot order array ---#
-		# 		$bladeHash.Actual_Boot_Order += $bootHash
-		# 	}
-		# 	#--- Add current blade hash data to DomainHash variable ---#
-		# 	$DomainHash.Inventory.Blades += $bladeHash
-		# }
-		# #--- End Blade Inventory Collection ---#
+			#--- Array variable for storing boot entries ---#
+			$bladeHash.Actual_Boot_Order = @()
+			#--- Iterate through all boot entries ---#
+			$blade | Get-UcsBiosUnit | Get-UcsBiosBOT | Get-UcsBiosBootDevGrp | Sort-Object Order | % {
+				#--- Store current pipe variable to local variable ---#
+				$entry = $_
+				#--- Hash variable for storing current entry data ---#
+				$bootHash = @{}
+				#--- Grab entry device type ---#
+				$bootHash.Descr = $entry.Descr
+				#--- Grab detailed information about current boot entry ---#
+				$bootHash.Entries = @()
+				$entry | Get-UcsBiosBootDev | % {
+					#--- Formats Entry string like UCSM presentation ---#
+					$bootHash.Entries += "($($_.Order)) $($_.Descr)"
+				}
+				#--- Add boot entry data to actual boot order array ---#
+				$bladeHash.Actual_Boot_Order += $bootHash
+			}
+			#--- Add current blade hash data to DomainHash variable ---#
+			# $DomainHash.Inventory.Blades += $bladeHash
+			$all_blades.inventory += $bladeHash
+		}
+		$all_blades.get_keys() | % {
+			$all_blades[$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$_/blades.json" | Out-Null
+		}
 		
-		# #--- Start Rack Inventory Collection ---#
+		#--- End Blade Inventory Collection ---#
 		
-		# #--- Set current job progress ---#
-		# $Process_Hash.Progress[$domain] = 48
+		#--- Start Rack Inventory Collection ---#
 		
-		# #--- Array variable for storing rack server data ---#
-		# $DomainHash.Inventory.Rackmounts = @()
-		# #--- Array variable for storing rack server adapter data ---#
-		# $DomainHash.Inventory.Rackmount_Adapters = @()
+		#--- Set current job progress ---#
+		$Process_Hash.Progress[$domain] = 48
 		
-		# #--- Iterate through each rackmount server and grab relevant data ---#
-		# Get-UcsRackUnit -Ucs $handle | % {
-		# 	#--- Store current pipe variable and store to local variable ---#
-		# 	$rack = $_
-		# 	#--- Hash variable for storing current rack server data ---#
-		# 	$rackHash = @{}
-		# 	$rackHash.Rack_Id = $rack.Id
-		# 	$rackHash.Dn = $rack.Dn
-		# 	#--- Get Model and Description common names and format the text ---#
-		# 	($rackHash.Model,$rackHash.Model_Description) = Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentManufacturingDef -Ucs $handle -Filter "Sku -ieq $($rack.Model)" | Select Name,Description | % {($_.Name -replace "Cisco UCS ", ""),$_.Description}
-		# 	$rackHash.Serial = $rack.Serial
-		# 	$rackHash.Service_Profile = $rack.AssignedToDn
-		# 	$rackHash.Uuid = $rack.Uuid
-		# 	$rackHash.UsrLbl = $rack.UsrLbl
-		# 	$rackHash.Name = $rack.Name
-		# 	#--- If no service profile exists set profile name to "Unassociated" ---#
-		# 	if(!($rackHash.Service_Profile))
-		# 	{
-		# 		$rackHash.Service_Profile = "Unassociated"
-		# 	}
-		# 	#--- Get child objects for pulling detailed information
-		# 	$childTargets = $rack | Get-UcsChild | where {$_.Rn -ieq "bios" -or $_.Rn -ieq "mgmt" -or $_.Rn -ieq "board"} | get-ucschild
-		# 	#--- Get rack CPU data ---#
-		# 	$cpu = ($childTargets | where {$_.Rn -match "cpu" -and $_.Model -ne ""} | Select-Object -first 1).Model
-		# 	#--- Get CPU common name and format text ---#
-		# 	$rackHash.CPU = '(' + $rack.NumOfCpus + ')' + ($cpu.Substring(([regex]::match($cpu,'CPU ').Index) + ([regex]::match($cpu,'CPU ').Length))).Replace(" ","")
-		# 	$rackHash.CPU_Cores = $rack.NumOfCores
-		# 	$rackHash.CPU_Threads = $rack.NumOfThreads
-		# 	#--- Format available memory in GB ---#
-		# 	$rackHash.Memory = $rack.AvailableMemory/1024
-		# 	$rackHash.Memory_Speed = $rack.MemorySpeed
-		# 	$rackHash.BIOS = (($childTargets | where {$_.Type -eq "blade-bios"}).Version -replace ('(?!(.*[.]){2}).*',"")).TrimEnd('.')
-		# 	$rackHash.CIMC = ($childTargets | where {$_.Type -eq "blade-controller" -and $_.Deployment -ieq "system"}).Version
-		# 	#--- Iterate through each server adapter and grab detailed information ---#
-		# 	foreach (${adapter} in ($rack | Get-UcsAdaptorUnit))
-		# 	{
-		# 		$adapterHash = @{}
-		# 		$adapterHash.Rack_Id = $rack.Id
-		# 		$adapterHash.Slot = ${adapter}.PciSlot
-		# 		#--- Get common name of adapter model and format text ---#
-		# 		$adapterHash.Model = (Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentManufacturingDef -Ucs $handle -Filter "Sku -cmatch $(${adapter}.Model)").Name -replace "Cisco UCS ", ""
-		# 		$adapterHash.Serial = ${adapter}.Serial
-		# 		$adapterHash.Running_FW = (${adapter} | Get-UcsMgmtController | Get-UcsFirmwareRunning -Deployment system).Version
-		# 		#--- Add adapter data to Rackmount_Adapters array variable ---#
-		# 		$DomainHash.Inventory.Rackmount_Adapters += $adapterHash
-		# 	}
-		# 	#--- Array variable for storing rack memory data ---#
-		# 	$rackHash.Memory_Array = @()
-		# 	#--- Iterage through all memory tied to current server and grab relevant data ---#
-		# 	$memoryArray | ? Dn -cmatch $rack.Dn | Select Id,Location,Capacity,Clock | Sort-Object {($_.Id) -as [int]} | % {
-		# 		#--- Hash variable for storing current memory data ---#
-		# 		$memHash = @{}
-		# 		$memHash.Name = "Memory " + $_.Id
-		# 		$memHash.Location = $_.Location
-		# 		#--- Format DIMM capacity in GB ---#
-		# 		$memHash.Capacity = ($_.Capacity)/1024
-		# 		$memHash.Clock = $_.Clock
-		# 		$rackHash.Memory_Array += $memHash
-		# 	}
+		#--- Array variable for storing rack server data ---#
+		$all_racks = @{
+			inventory = @()
+			faults = @()
+			stats = @()
+		}
+		#--- Iterate through each rackmount server and grab relevant data ---#
+		Get-UcsRackUnit -Ucs $handle | % {
+			#--- Store current pipe variable and store to local variable ---#
+			$rack = $_
+			#--- Hash variable for storing current rack server data ---#
+			$rackHash = @{}
+			$rackHash.Rack_Id = $rack.Id
+			$rackHash.Dn = $rack.Dn
+			$rackHash.Ucs = $rack.Ucs
+			#--- Get Model and Description common names and format the text ---#
+			($rackHash.Model,$rackHash.Model_Description) = $ManufacturingDef | ? {$_.Sku -ieq "$($rack.Model)"} | Select Name,Description | % {($_.Name -replace "Cisco UCS ", ""),$_.Description}
+			$rackHash.Serial = $rack.Serial
+			$rackHash.Service_Profile = $rack.AssignedToDn
+			$rackHash.Uuid = $rack.Uuid
+			$rackHash.UsrLbl = $rack.UsrLbl
+			$rackHash.Name = $rack.Name
+			#--- If no service profile exists set profile name to "Unassociated" ---#
+			if(!($rackHash.Service_Profile))
+			{
+				$rackHash.Service_Profile = "Unassociated"
+			}
+			#--- Get child objects for pulling detailed information
+			$childTargets = $rack | Get-UcsChild | where {$_.Rn -ieq "bios" -or $_.Rn -ieq "mgmt" -or $_.Rn -ieq "board"} | get-ucschild
+			#--- Get rack CPU data ---#
+			$cpu = ($childTargets | where {$_.Rn -match "cpu" -and $_.Model -ne ""} | Select-Object -first 1).Model
+			#--- Get CPU common name and format text ---#
+			$rackHash.CPU = '(' + $rack.NumOfCpus + ')' + ($cpu.Substring(([regex]::match($cpu,'CPU ').Index) + ([regex]::match($cpu,'CPU ').Length))).Replace(" ","")
+			$rackHash.CPU_Cores = $rack.NumOfCores
+			$rackHash.CPU_Threads = $rack.NumOfThreads
+			#--- Format available memory in GB ---#
+			$rackHash.Memory = $rack.AvailableMemory/1024
+			$rackHash.Memory_Speed = $rack.MemorySpeed
+			$rackHash.BIOS = (($childTargets | where {$_.Type -eq "blade-bios"}).Version -replace ('(?!(.*[.]){2}).*',"")).TrimEnd('.')
+			$rackHash.CIMC = ($childTargets | where {$_.Type -eq "blade-controller" -and $_.Deployment -ieq "system"}).Version
+			$all_racks.faults += $blade | Get-UcsFault
+			$all_racks.stats += $blade | Get-UcsStatistics
+			#--- Iterate through each server adapter and grab detailed information ---#
+			foreach (${adapter} in ($rack | Get-UcsAdaptorUnit))
+			{
+				$adapterHash = @{}
+				$adapterHash.Dn = $adapter.Dn
+				$adapterHash.Ucs = $adapter.Ucs
+				$adapterHash.Rack_Id = $rack.Id
+				$adapterHash.Slot = $adapter.PciSlot
+				#--- Get common name of adapter model and format text ---#
+				$adapterHash.Model = ($ManufacturingDef | ? { $_.Sku -cmatch "$($adapter.Model)" }).Name -replace "Cisco UCS ", ""
+				$adapterHash.Serial = $adapter.Serial
+				$adapterHash.Running_FW = ($adapter | Get-UcsMgmtController | Get-UcsFirmwareRunning -Deployment system).Version
+				#--- Add adapter data to Rackmount_Adapters array variable ---#
+				$all_adapters.inventory += $adapterHash
+			}
+			$computeBoard = $rack | Get-UcsComputeBoard
+			$memoryArray = $computeBoard | Get-UcsMemoryArray
+			$rackHash.Memory_Slots_Max = $memoryArray.MaxDevices -as [int]
+			$rackHash.Memory_Slots_Populated = $memoryArray.Populated -as [int]
+			$memoryArray | Get-UcsMemoryUnit | Sort-Object {($_.Id) -as [int]} | % {
+				#--- Hash variable for storing current memory data ---#
+				$memHash = @{}
+				$memoryUnit = $_
+				$memHash.Dn = $memoryUnit.Dn
+				$memHash.Ucs = $memoryUnit.Ucs
+				$memHash.Name = "Memory " + $memoryUnit.Id
+				$memHash.Location = $memoryUnit.Location
+				#--- Format DIMM capacity in GB ---#
+				$memHash.Capacity = ($memoryUnit.Capacity)/1024
+				$memHash.Clock = $memoryUnit.Clock
+				$memHash.Type = $memoryUnit.Type
+				$memHash.Model = $memoryUnit.Model
+				$memoryCapabilities = $ManufacturingDef | ? {$_.Dn -match "manufacturer-$($memoryUnit.Vendor)-model-$($memoryUnit.Model)-revision-$($memoryUnit.Revision)"}
+				$memHash.Description = $memoryCapabilities.Description
+				$memHash.Vendor = $memoryUnit.Vendor
+				$memHash.VendorDescription = $memoryCapabilities.OemName
+				$memHash.Pid = $memoryCapabilities.Pid
+				$memHash.Vid = $memoryCapabilities.Vid
+				$memHash.Sku = $memoryCapabilities.Sku
+				$memHash.PartNumber = $memoryCapabilities.PartNumber
+				$all_memory.inventory += $memHash
+			}
 			
-		# 	#--- Array variable for storing local storage configuration data ---#
-		# 	$rackHash.Storage = @()
-		# 	#--- Iterate through each server storage controller and grab relevant data ---#
-		# 	$rack | Get-UcsComputeBoard | Get-UcsStorageController | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$controller = $_
-		# 		#--- Hash variable for storing current storage controller data ---#
-		# 		$controllerHash = @{}
-		# 		#--- Grab relevant controller data and store to respective controllerHash variable ---#
-		# 		$controllerHash.Id,$controllerHash.Vendor,$controllerHash.Revision,$controllerHash.RaidSupport,$controllerHash.PciAddr,$controllerHash.RebuildRate,$controllerHash.Model,$controllerHash.Serial,$controllerHash.ControllerStatus = $controller.Id,$controller.Vendor,$controller.HwRevision,$controller.RaidSupport,$controller.PciAddr,$controller.XtraProperty.RebuildRate,$controller.Model,$controller.Serial,$controller.XtraProperty.ControllerStatus
-		# 		$controllerHash.Disk_Count = 0
-		# 		#--- Array variable for storing controller disks ---#
-		# 		$controllerHash.Disks = @()
-		# 		$controller | Get-UcsStorageLocalDisk -Presence "equipped" | % {
-		# 			#--- Store current pipe variable to local variable ---#
-		# 			$disk = $_
-		# 			#--- Hash variable for storing current disk data ---#
-		# 			$diskHash = @{}
-		# 			#--- Get common name of disk model and format text ---#
-		# 			$equipmentDef = Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentManufacturingDef -Ucs $handle -Filter "OemPartNumber -ieq $($disk.Model)"
-		# 			#--- Get detailed disk capability data ---#
-		# 			$capabilities = Get-UcsEquipmentLocalDiskDef -Ucs $handle -Filter "Dn -cmatch $($disk.Model)"
-		# 			$diskHash.Id = $disk.Id
-		# 			$diskHash.Pid = $equipmentDef.Pid
-		# 			$diskHash.Vendor = $disk.Vendor
-		# 			$diskHash.Vid = $equipmentDef.Vid
-		# 			$diskHash.Serial = $disk.Serial
-		# 			$diskHash.Product_Name = $equipmentDef.Name
-		# 			$diskHash.Drive_State = $disk.XtraProperty.DiskState
-		# 			$diskHash.Power_State = $disk.XtraProperty.PowerState
-		# 			#--- Format disk size to whole GB value ---#
-		# 			$diskHash.Size = "{0:N2}" -f ($disk.Size/1024)
-		# 			$diskHash.Link_Speed = $disk.XtraProperty.LinkSpeed
-		# 			$diskHash.Blocks = $disk.NumberOfBlocks
-		# 			$diskHash.Block_Size = $disk.BlockSize
-		# 			$diskHash.Technology = $capabilities.Technology
-		# 			$diskHash.Avg_Seek_Time = $capabilities.SeekAverageReadWrite
-		# 			$diskHash.Track_To_Seek = $capabilities.SeekTrackToTrackReadWrite
-		# 			$diskHash.Operability = $disk.Operability
-		# 			$diskHash.Presence = $disk.Presence
-		# 			$diskHash.Running_Version = ($disk | Get-UcsFirmwareRunning).Version
-		# 			$controllerHash.Disk_Count += 1
-		# 			#--- Add current disk hash to controller hash disk array ---#
-		# 			$controllerHash.Disks += $diskHash
-		# 		}
-		# 		#--- Add controller hash variable to current rack hash storage array ---#
-		# 		$rackHash.Storage += $controllerHash
-		# 	}
-		# 	#--- Array variable for storing VIF information for current rack ---#
-		# 	$rackHash.VIFs = @()
-		# 	#--- Grab all circuits that match the current rack DN and are active or link-down ---#
-		# 	$circuits = Get-UcsDcxVc -Ucs $handle -Filter "Dn -cmatch $($rack.Dn) -and (OperState -cmatch active -or OperState -cmatch link-down)" | Select Dn,Id,OperBorderPortId,OperBorderSlotId,SwitchId,Vnic,LinkState
-		# 	#--- Iterate through all paths of type "mux-fabric" for the current rack ---#
-		# 	$paths | ? {$_.Dn -Match $rack.Dn -and $_.CType -match "mux-fabric" -and $_.CType -notmatch "mux-fabric(.*)?[-]"} | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$vif = $_
-		# 		#--- Hash variable for storing current VIF data ---#
-		# 		$vifHash = @{}
-		# 		#--- The name of the current Path formatted to match the presentation in UCSM ---#
-		# 		$vifHash.Name = "Path " + $_.SwitchId + '/' + ($_.Dn | Select-String -pattern "(?<=path[-]).*(?=[/])")[0].Matches.Value
-		# 		#--- Gets peer port information filtered to the current path for adapter and fex host port ---#
-		# 		$vifPeers = $paths | ? {$_.EpDn -match ($vif.EpDn | Select-String -pattern ".*(?=(.*[/]){2})").Matches.Value -and $_.Dn -match ($vif.Dn | Select-String -pattern ".*(?=(.*[/]){3})").Matches.Value -and $_.Dn -ne $vif.Dn}									
+			#--- Array variable for storing local storage configuration data ---#
+			$rackHash.Storage = @()
+			#--- Iterate through each server storage controller and grab relevant data ---#
+			$computeBoard | Get-UcsStorageController | % {
+				#--- Store current pipe variable to local variable ---#
+				$controller = $_
+				#--- Hash variable for storing current storage controller data ---#
+				$controllerHash = @{}
+				#--- Grab relevant controller data and store to respective controllerHash variable ---#
+				$controllerHash.Id,$controllerHash.Vendor,$controllerHash.Revision,$controllerHash.RaidSupport,$controllerHash.PciAddr,$controllerHash.RebuildRate,$controllerHash.Model,$controllerHash.Serial,$controllerHash.ControllerStatus = $controller.Id,$controller.Vendor,$controller.HwRevision,$controller.RaidSupport,$controller.PciAddr,$controller.XtraProperty.RebuildRate,$controller.Model,$controller.Serial,$controller.XtraProperty.ControllerStatus
+				$controllerHash.Disk_Count = 0
+				#--- Array variable for storing controller disks ---#
+				$controllerHash.Disks = @()
+				$controller | Get-UcsStorageLocalDisk -Presence "equipped" | % {
+					#--- Store current pipe variable to local variable ---#
+					$disk = $_
+					#--- Hash variable for storing current disk data ---#
+					$diskHash = @{}
+					#--- Get common name of disk model and format text ---#
+					$equipmentDef = $ManufacturingDef | ? {$_.OemPartNumber -ieq "$($disk.Model)"}
+					#--- Get detailed disk capability data ---#
+					$capabilities = Get-UcsEquipmentLocalDiskDef -Ucs $handle -Filter "Dn -cmatch $($disk.Model)"
+					$diskHash.Id = $disk.Id
+					$diskHash.Pid = $equipmentDef.Pid
+					$diskHash.Vendor = $disk.Vendor
+					$diskHash.Vid = $equipmentDef.Vid
+					$diskHash.Serial = $disk.Serial
+					$diskHash.Product_Name = $equipmentDef.Name
+					$diskHash.Drive_State = $disk.XtraProperty.DiskState
+					$diskHash.Power_State = $disk.XtraProperty.PowerState
+					#--- Format disk size to whole GB value ---#
+					$diskHash.Size = "{0:N2}" -f ($disk.Size/1024)
+					$diskHash.Link_Speed = $disk.XtraProperty.LinkSpeed
+					$diskHash.Blocks = $disk.NumberOfBlocks
+					$diskHash.Block_Size = $disk.BlockSize
+					$diskHash.Technology = $capabilities.Technology
+					$diskHash.Avg_Seek_Time = $capabilities.SeekAverageReadWrite
+					$diskHash.Track_To_Seek = $capabilities.SeekTrackToTrackReadWrite
+					$diskHash.Operability = $disk.Operability
+					$diskHash.Presence = $disk.Presence
+					$diskHash.Running_Version = ($disk | Get-UcsFirmwareRunning).Version
+					$controllerHash.Disk_Count += 1
+					#--- Add current disk hash to controller hash disk array ---#
+					$controllerHash.Disks += $diskHash
+				}
+				#--- Add controller hash variable to current rack hash storage array ---#
+				$rackHash.Storage += $controllerHash
+			}
+			#--- Array variable for storing VIF information for current rack ---#
+			$rackHash.VIFs = @()
+			#--- Grab all circuits that match the current rack DN and are active or link-down ---#
+			$circuits = Get-UcsDcxVc -Ucs $handle -Filter "Dn -cmatch $($rack.Dn) -and (OperState -cmatch active -or OperState -cmatch link-down)" | Select Dn,Id,OperBorderPortId,OperBorderSlotId,SwitchId,Vnic,LinkState
+			#--- Iterate through all paths of type "mux-fabric" for the current rack ---#
+			$paths | ? {$_.Dn -Match $rack.Dn -and $_.CType -match "mux-fabric" -and $_.CType -notmatch "mux-fabric(.*)?[-]"} | % {
+				#--- Store current pipe variable to local variable ---#
+				$vif = $_
+				#--- Hash variable for storing current VIF data ---#
+				$vifHash = @{}
+				#--- The name of the current Path formatted to match the presentation in UCSM ---#
+				$vifHash.Name = "Path " + $_.SwitchId + '/' + ($_.Dn | Select-String -pattern "(?<=path[-]).*(?=[/])")[0].Matches.Value
+				#--- Gets peer port information filtered to the current path for adapter and fex host port ---#
+				$vifPeers = $paths | ? {$_.EpDn -match ($vif.EpDn | Select-String -pattern ".*(?=(.*[/]){2})").Matches.Value -and $_.Dn -match ($vif.Dn | Select-String -pattern ".*(?=(.*[/]){3})").Matches.Value -and $_.Dn -ne $vif.Dn}									
 				
-		# 		$vifHash.Adapter_Port = "$($vifPeers[1].PeerSlotId)/$($vifPeers[1].PeerPortId)"
-		# 		$vifHash.Fex_Host_Port = "$($vifPeers[1].ChassisId)/$($vifPeers[1].SlotId)/$($vifPeers[1].PortId)"
-		# 		$vifHash.Fex_Network_Port = $vifPeers[0].PortId
-		# 		$vifHash.FI_Server_Port = "$($vif.SwitchId)/$($vif.PeerSlotId)/$($vif.PeerPortId)"
+				$vifHash.Adapter_Port = "$($vifPeers[1].PeerSlotId)/$($vifPeers[1].PeerPortId)"
+				$vifHash.Fex_Host_Port = "$($vifPeers[1].ChassisId)/$($vifPeers[1].SlotId)/$($vifPeers[1].PortId)"
+				$vifHash.Fex_Network_Port = $vifPeers[0].PortId
+				$vifHash.FI_Server_Port = "$($vif.SwitchId)/$($vif.PeerSlotId)/$($vif.PeerPortId)"
 				
-		# 		#--- Array variable for storing virtual circuit data ---#
-		# 		$vifHash.Circuits = @()
-		# 		#--- Iterate through all circuits for the current vif ---#
-		# 		$circuits | ? {$_.Dn -cmatch ($vif.Dn | Select-String -pattern ".*(?<=[/])")[0].Matches.Value} | Select Id,vNic,OperBorderPortId,OperBorderSlotId,LinkState,SwitchId | % {
-		# 			#--- Hash variable for storing current circuit data ---#
-		# 			$vcHash = @{}
-		# 			$vcHash.Name = 'Virtual Circuit ' + $_.Id
-		# 			$vcHash.vNic = $_.vNic
-		# 			$vcHash.Link_State = $_.LinkState
-		# 			#--- Check if the current circuit is pinned to a PC uplink ---#
-		# 			if($_.OperBorderPortId -gt 0 -and $_.OperBorderSlotId -eq 0)
-		# 			{
-		# 				$vcHash.FI_Uplink = "$($_.SwitchId)/PC - $($_.OperBorderPortId)"
-		# 			}
-		# 			#--- Check if the current circuit is unpinned ---#
-		# 			elseif($_.OperBorderPortId -eq 0 -and $_.OperBorderSlotId -eq 0)
-		# 			{
-		# 				$vcHash.FI_Uplink = "unpinned"
-		# 			}
-		# 			#--- Assume that the circuit is pinned to a single uplink port ---#
-		# 			else
-		# 			{
-		# 				$vcHash.FI_Uplink = "$($_.SwitchId)/$($_.OperBorderSlotId)/$($_.OperBorderPortId)"
-		# 			}
-		# 			$vifHash.Circuits += $vcHash
-		# 		}
-		# 		$rackHash.VIFs += $vifHash
-		# 	}
-		# 	#--- Get the configured boot definition of the current rack ---#
+				#--- Array variable for storing virtual circuit data ---#
+				$vifHash.Circuits = @()
+				#--- Iterate through all circuits for the current vif ---#
+				$circuits | ? {$_.Dn -cmatch ($vif.Dn | Select-String -pattern ".*(?<=[/])")[0].Matches.Value} | Select Id,vNic,OperBorderPortId,OperBorderSlotId,LinkState,SwitchId | % {
+					#--- Hash variable for storing current circuit data ---#
+					$vcHash = @{}
+					$vcHash.Name = 'Virtual Circuit ' + $_.Id
+					$vcHash.vNic = $_.vNic
+					$vcHash.Link_State = $_.LinkState
+					#--- Check if the current circuit is pinned to a PC uplink ---#
+					if($_.OperBorderPortId -gt 0 -and $_.OperBorderSlotId -eq 0)
+					{
+						$vcHash.FI_Uplink = "$($_.SwitchId)/PC - $($_.OperBorderPortId)"
+					}
+					#--- Check if the current circuit is unpinned ---#
+					elseif($_.OperBorderPortId -eq 0 -and $_.OperBorderSlotId -eq 0)
+					{
+						$vcHash.FI_Uplink = "unpinned"
+					}
+					#--- Assume that the circuit is pinned to a single uplink port ---#
+					else
+					{
+						$vcHash.FI_Uplink = "$($_.SwitchId)/$($_.OperBorderSlotId)/$($_.OperBorderPortId)"
+					}
+					$vifHash.Circuits += $vcHash
+				}
+				$rackHash.VIFs += $vifHash
+			}
+			#--- Get the configured boot definition of the current rack ---#
 			
-		# 	#--- Array variable for storing boot order data ---#
-		# 	$rackHash.Configured_Boot_Order = @()
-		# 	#--- Iterate through all boot parameters for current rack ---#
-		# 	$rack | Get-UcsBootDefinition | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$policy = $_
-		# 		#--- Hash variable for storing current boot data ---#
-		# 		$bootHash = @{}
-		# 		#--- Grab multiple boot policy data points from current policy ---#
-		# 		($bootHash.Dn,$bootHash.BootMode,$bootHash.EnforceVnicName,$bootHash.Name,$bootHash.RebootOnUpdate,$bootHash.Owner) = $policy.Dn,$policy.BootMode,$policy.EnforceVnicName,$policy.Name,$policy.RebootOnUpdate,$policy.Owner
+			#--- Array variable for storing boot order data ---#
+			$rackHash.Configured_Boot_Order = @()
+			#--- Iterate through all boot parameters for current rack ---#
+			$rack | Get-UcsBootDefinition | % {
+				#--- Store current pipe variable to local variable ---#
+				$policy = $_
+				#--- Hash variable for storing current boot data ---#
+				$bootHash = @{}
+				#--- Grab multiple boot policy data points from current policy ---#
+				($bootHash.Dn,$bootHash.BootMode,$bootHash.EnforceVnicName,$bootHash.Name,$bootHash.RebootOnUpdate,$bootHash.Owner) = $policy.Dn,$policy.BootMode,$policy.EnforceVnicName,$policy.Name,$policy.RebootOnUpdate,$policy.Owner
 			
-		# 		#--- Array variable for string boot policy entries ---#
-		# 		$bootHash.Entries = @()
-		# 		#--- Get all child objects of the current policy and sort by boot order ---#
-		# 		$policy | Get-UcsChild | Sort-Object Order | % {
-		# 			#--- Store current pipe variable to local variable ---#
-		# 			$entry = $_
-		# 			#===========================================================#
-		# 			#	Switch statement using the device type as the target	#
-		# 			#															#
-		# 			#	Variable Definitions:									#
-		# 			#		Level1 - VNIC, Order								#
-		# 			#		Level2 - Type, VNIC Name							#
-		# 			#		Level3 - Lun, Type, WWN								#
-		# 			#===========================================================#
-		# 			Switch ($entry.Type)
-		# 			{
-		# 				#--- Matches either local media or SAN storage ---#
-		# 				'storage' {
-		# 					#--- Get child data of boot entry for more detailed information ---#
-		# 					$entry | Get-UcsChild | Sort-Object Type | % {
-		# 						#--- Hash variable for storing current boot entry data ---#
-		# 						$entryHash = @{}
-		# 						#--- Checks if current entry is a SAN target ---#
-		# 						if($_.Rn -match "san")
-		# 						{
-		# 							#--- Grab Level1 data ---#
-		# 							$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 							#--- Array for storing Level2 data ---#
-		# 							$entryHash.Level2 = @()
-		# 							#--- Hash variable for storing current san entry data ---#
-		# 							$sanHash = @{}
-		# 							$sanHash.Type = $_.Type
-		# 							$sanHash.VnicName = $_.VnicName
-		# 							#--- Array variable for storing Level3 data ---#
-		# 							$sanHash.Level3 = @()
-		# 							#--- Get Level3 data from child object ---#
-		# 							$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
-		# 							#--- Add sanHash to Level2 array variable
-		# 							$entryHash.Level2 += $sanHash
-		# 							#--- Add current boot entry data to boot hash ---#
-		# 							$bootHash.Entries += $entryHash
-		# 						}
-		# 						#--- Checks if current entry is a local storage target ---#
-		# 						elseif($_.Rn -match "local-storage")
-		# 						{
-		# 							#--- Selects Level1 data ---#
-		# 							$_ | Get-UcsChild | Sort-Object Order | % {
-		# 								$entryHash = @{}
-		# 								$entryHash.Level1 = $_ | Select-Object Type,Order
-		# 								$bootHash.Entries += $entryHash
-		# 							}
-		# 						}									
-		# 					}
-		# 				}
-		# 				#--- Matches virtual media types ---#
-		# 				'virtual-media' {
-		# 					$entryHash = @{}
-		# 					#--- Get Level1 data plus Access type to determine device type ---#
-		# 					$entryHash.Level1 = $entry | Select-Object Type,Order,Access
-		# 					if ($entryHash.Level1.Access -match 'read-only')
-		# 					{
-		# 						$entryHash.Level1.Type = 'CD/DVD'
-		# 					}
-		# 					else
-		# 					{
-		# 						$entryHash.Level1.Type = 'floppy'
-		# 					}
-		# 					$bootHash.Entries += $entryHash
-		# 				}
-		# 				#--- Matches lan boot types ---#
-		# 				'lan' {
-		# 					$entryHash = @{}
-		# 					$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 					$entryHash.Level2 = @()
-		# 					$entryHash.Level2 += $entry | Get-UcsChild | Select-Object VnicName,Type 
-		# 					$bootHash.Entries += $entryHash
-		# 				}
-		# 				#--- Matches SAN and iSCSI boot types ---#
-		# 				'san' {
-		# 					$entryHash = @{}
-		# 					#--- Grab Level1 data ---#
-		# 					$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 					$entryHash.Level2 = @()
-		# 					$entry | Get-UcsChild | Sort-Object Type | % {
-		# 						#--- Hash variable for storing current san entry data ---#
-		# 						$sanHash = @{}
-		# 						#--- Grab Level2 Data ---#
-		# 						$sanHash.Type = $_.Type
-		# 						$sanHash.VnicName = $_.VnicName
-		# 						#--- Array variable for storing Level3 data ---#
-		# 						$sanHash.Level3 = @()
-		# 						#--- Get Level3 data from child object ---#
-		# 						$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
-		# 						#--- Add sanHash to Level2 array variable
-		# 						$entryHash.Level2 += $sanHash
-		# 					}
-		# 					#--- Add current boot entry data to boot hash ---#
-		# 					$bootHash.Entries += $entryHash
-		# 				}
-		# 				'iscsi' {
-		# 					#--- Hash variable for storing iscsi boot entry data ---#
-		# 					$entryHash = @{}
-		# 					#--- Grab Level1 boot data ---#
-		# 					$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 					#--- Array variable for storing Level2 boot data ---#
-		# 					$entryHash.Level2 = @()
-		# 					#--- Get all iSCSI Level2 data from child objects ---#
-		# 					$entryHash.Level2 += $entry | Get-UcsChild | Sort-Object Type | Select-Object ISCSIVnicName,Type
-		# 					#--- Add current boot entry data to boot hash ---#
-		# 					$bootHash.Entries += $entryHash
-		# 				}
-		# 			}
-		# 		}
-		# 		#--- Sort all boot entries by Level1 Order ---#
-		# 		$bootHash.Entries = $bootHash.Entries | Sort-Object {$_.Level1.Order}
-		# 		#--- Store boot entries to configured boot order array ---#
-		# 		$rackHash.Configured_Boot_Order += $bootHash
-		# 	}
+				#--- Array variable for string boot policy entries ---#
+				$bootHash.Entries = @()
+				#--- Get all child objects of the current policy and sort by boot order ---#
+				$policy | Get-UcsChild | Sort-Object Order | % {
+					#--- Store current pipe variable to local variable ---#
+					$entry = $_
+					#===========================================================#
+					#	Switch statement using the device type as the target	#
+					#															#
+					#	Variable Definitions:									#
+					#		Level1 - VNIC, Order								#
+					#		Level2 - Type, VNIC Name							#
+					#		Level3 - Lun, Type, WWN								#
+					#===========================================================#
+					Switch ($entry.Type)
+					{
+						#--- Matches either local media or SAN storage ---#
+						'storage' {
+							#--- Get child data of boot entry for more detailed information ---#
+							$entry | Get-UcsChild | Sort-Object Type | % {
+								#--- Hash variable for storing current boot entry data ---#
+								$entryHash = @{}
+								#--- Checks if current entry is a SAN target ---#
+								if($_.Rn -match "san")
+								{
+									#--- Grab Level1 data ---#
+									$entryHash.Level1 = $entry | Select-Object Type,Order
+									#--- Array for storing Level2 data ---#
+									$entryHash.Level2 = @()
+									#--- Hash variable for storing current san entry data ---#
+									$sanHash = @{}
+									$sanHash.Type = $_.Type
+									$sanHash.VnicName = $_.VnicName
+									#--- Array variable for storing Level3 data ---#
+									$sanHash.Level3 = @()
+									#--- Get Level3 data from child object ---#
+									$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
+									#--- Add sanHash to Level2 array variable
+									$entryHash.Level2 += $sanHash
+									#--- Add current boot entry data to boot hash ---#
+									$bootHash.Entries += $entryHash
+								}
+								#--- Checks if current entry is a local storage target ---#
+								elseif($_.Rn -match "local-storage")
+								{
+									#--- Selects Level1 data ---#
+									$_ | Get-UcsChild | Sort-Object Order | % {
+										$entryHash = @{}
+										$entryHash.Level1 = $_ | Select-Object Type,Order
+										$bootHash.Entries += $entryHash
+									}
+								}									
+							}
+						}
+						#--- Matches virtual media types ---#
+						'virtual-media' {
+							$entryHash = @{}
+							#--- Get Level1 data plus Access type to determine device type ---#
+							$entryHash.Level1 = $entry | Select-Object Type,Order,Access
+							if ($entryHash.Level1.Access -match 'read-only')
+							{
+								$entryHash.Level1.Type = 'CD/DVD'
+							}
+							else
+							{
+								$entryHash.Level1.Type = 'floppy'
+							}
+							$bootHash.Entries += $entryHash
+						}
+						#--- Matches lan boot types ---#
+						'lan' {
+							$entryHash = @{}
+							$entryHash.Level1 = $entry | Select-Object Type,Order
+							$entryHash.Level2 = @()
+							$entryHash.Level2 += $entry | Get-UcsChild | Select-Object VnicName,Type 
+							$bootHash.Entries += $entryHash
+						}
+						#--- Matches SAN and iSCSI boot types ---#
+						'san' {
+							$entryHash = @{}
+							#--- Grab Level1 data ---#
+							$entryHash.Level1 = $entry | Select-Object Type,Order
+							$entryHash.Level2 = @()
+							$entry | Get-UcsChild | Sort-Object Type | % {
+								#--- Hash variable for storing current san entry data ---#
+								$sanHash = @{}
+								#--- Grab Level2 Data ---#
+								$sanHash.Type = $_.Type
+								$sanHash.VnicName = $_.VnicName
+								#--- Array variable for storing Level3 data ---#
+								$sanHash.Level3 = @()
+								#--- Get Level3 data from child object ---#
+								$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
+								#--- Add sanHash to Level2 array variable
+								$entryHash.Level2 += $sanHash
+							}
+							#--- Add current boot entry data to boot hash ---#
+							$bootHash.Entries += $entryHash
+						}
+						'iscsi' {
+							#--- Hash variable for storing iscsi boot entry data ---#
+							$entryHash = @{}
+							#--- Grab Level1 boot data ---#
+							$entryHash.Level1 = $entry | Select-Object Type,Order
+							#--- Array variable for storing Level2 boot data ---#
+							$entryHash.Level2 = @()
+							#--- Get all iSCSI Level2 data from child objects ---#
+							$entryHash.Level2 += $entry | Get-UcsChild | Sort-Object Type | Select-Object ISCSIVnicName,Type
+							#--- Add current boot entry data to boot hash ---#
+							$bootHash.Entries += $entryHash
+						}
+					}
+				}
+				#--- Sort all boot entries by Level1 Order ---#
+				$bootHash.Entries = $bootHash.Entries | Sort-Object {$_.Level1.Order}
+				#--- Store boot entries to configured boot order array ---#
+				$rackHash.Configured_Boot_Order += $bootHash
+			}
 			
-		# 	#--- Grab actual boot order data from BIOS boot order table for current rack ---#
+			#--- Grab actual boot order data from BIOS boot order table for current rack ---#
 			
-		# 	#--- Array variable for storing boot entries ---#
-		# 	$rackHash.Actual_Boot_Order = @()
-		# 	#--- Iterate through all boot entries ---#
-		# 	$rack | Get-UcsBiosUnit | Get-UcsBiosBOT | Get-UcsBiosBootDevGrp | Sort-Object Order | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$entry = $_
-		# 		#--- Hash variable for storing current entry data ---#
-		# 		$bootHash = @{}
-		# 		#--- Grab entry device type ---#
-		# 		$bootHash.Descr = $entry.Descr
-		# 		#--- Grab detailed information about current boot entry ---#
-		# 		$bootHash.Entries = @()
-		# 		$entry | Get-UcsBiosBootDev | % {
-		# 			#--- Formats Entry string like UCSM presentation ---#
-		# 			$bootHash.Entries += "($($_.Order)) $($_.Descr)"
-		# 		}
-		# 		#--- Add boot entry data to actual boot order array ---#
-		# 		$rackHash.Actual_Boot_Order += $bootHash
-		# 	}
-		# 	#--- Add racmount server hash to Inventory array ---#
-		# 	$DomainHash.Inventory.Rackmounts += $rackHash
-		# }
-		# #--- End Rack Inventory Collection ---#
+			#--- Array variable for storing boot entries ---#
+			$rackHash.Actual_Boot_Order = @()
+			#--- Iterate through all boot entries ---#
+			$rack | Get-UcsBiosUnit | Get-UcsBiosBOT | Get-UcsBiosBootDevGrp | Sort-Object Order | % {
+				#--- Store current pipe variable to local variable ---#
+				$entry = $_
+				#--- Hash variable for storing current entry data ---#
+				$bootHash = @{}
+				#--- Grab entry device type ---#
+				$bootHash.Descr = $entry.Descr
+				#--- Grab detailed information about current boot entry ---#
+				$bootHash.Entries = @()
+				$entry | Get-UcsBiosBootDev | % {
+					#--- Formats Entry string like UCSM presentation ---#
+					$bootHash.Entries += "($($_.Order)) $($_.Descr)"
+				}
+				#--- Add boot entry data to actual boot order array ---#
+				$rackHash.Actual_Boot_Order += $bootHash
+			}
+			#--- Add racmount server hash to Inventory array ---#
+			$all_racks.inventory += $rackHash
+		}
+		$all_racks.get_keys() | % {
+			$all_racks[$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$_/memory.json" | Out-Null
+		}
+		$all_memory.get_keys() | % {
+			$all_memory[$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$_/memory.json" | Out-Null
+		}
+		$all_adapters.get_keys() | % {
+			$all_adapters[$_] | ConvertTo-Json -Depth 14 | Set-Content -Path "$report_folder/$_/adapters.json" | Out-Null
+		}
+		#--- End Rack Inventory Collection ---#
 		
 		
-		# #--- Start Policy Data Collection ---#
+		#--- Start Policy Data Collection ---#
 		
-		# #--- Update job progress percent ---#
-		# $Process_Hash.Progress[$domain] = 60
-		# #--- Hash variable for storing system policies ---#
-		# $DomainHash.Policies.SystemPolicies = @{}
-		# #--- Grab DNS and NTP data ---#
-		# $DomainHash.Policies.SystemPolicies.DNS = @()
-		# $DomainHash.Policies.SystemPolicies.DNS += (Get-UcsDnsServer -Ucs $handle).Name
-		# $DomainHash.Policies.SystemPolicies.NTP = @()
-		# $DomainHash.Policies.SystemPolicies.NTP += (Get-UcsNtpServer -Ucs $handle).Name
-		# #--- Get chassis discovery data for future use ---#
-		# $Chassis_Discovery = Get-UcsChassisDiscoveryPolicy -Ucs $handle | Select Action,LinkAggregationPref
-		# $DomainHash.Policies.SystemPolicies.Action = $Chassis_Discovery.Action
-		# $DomainHash.Policies.SystemPolicies.Grouping = $Chassis_Discovery.LinkAggregationPref
-		# $DomainHash.Policies.SystemPolicies.Power = (Get-UcsPowerControlPolicy -Ucs $handle | Select Redundancy).Redundancy
-		# $DomainHash.Policies.SystemPolicies.FirmwareAutoSyncAction = (Get-UcsFirmwareAutoSyncPolicy | Select SyncState).SyncState
-		# $DomainHash.Policies.SystemPolicies.Maint = (Get-UcsMaintenancePolicy -Name "default" -Ucs $handle | Select UptimeDisr).UptimeDisr
-		# #$DomainHash.Policies.SystemPolicies.Timezone = (Get-UcsTimezone).Timezone -replace '([(].*[)])', ""
-		# $DomainHash.Policies.SystemPolicies.Timezone = (Get-UcsTimezone | Select Timezone).Timezone
+		#--- Update job progress percent ---#
+		$Process_Hash.Progress[$domain] = 60
+		#--- Hash variable for storing system policies ---#
+		$DomainHash.Policies.SystemPolicies = @{}
+		#--- Grab DNS and NTP data ---#
+		$DomainHash.Policies.SystemPolicies.DNS = @()
+		$DomainHash.Policies.SystemPolicies.DNS += (Get-UcsDnsServer -Ucs $handle).Name
+		$DomainHash.Policies.SystemPolicies.NTP = @()
+		$DomainHash.Policies.SystemPolicies.NTP += (Get-UcsNtpServer -Ucs $handle).Name
+		#--- Get chassis discovery data for future use ---#
+		$Chassis_Discovery = Get-UcsChassisDiscoveryPolicy -Ucs $handle | Select Action,LinkAggregationPref
+		$DomainHash.Policies.SystemPolicies.Action = $Chassis_Discovery.Action
+		$DomainHash.Policies.SystemPolicies.Grouping = $Chassis_Discovery.LinkAggregationPref
+		$DomainHash.Policies.SystemPolicies.Power = (Get-UcsPowerControlPolicy -Ucs $handle | Select Redundancy).Redundancy
+		$DomainHash.Policies.SystemPolicies.FirmwareAutoSyncAction = (Get-UcsFirmwareAutoSyncPolicy | Select SyncState).SyncState
+		$DomainHash.Policies.SystemPolicies.Maint = (Get-UcsMaintenancePolicy -Name "default" -Ucs $handle | Select UptimeDisr).UptimeDisr
+		#$DomainHash.Policies.SystemPolicies.Timezone = (Get-UcsTimezone).Timezone -replace '([(].*[)])', ""
+		$DomainHash.Policies.SystemPolicies.Timezone = (Get-UcsTimezone | Select Timezone).Timezone
 		
-		# #--- Maintenance Policies ---#
-		# $DomainHash.Policies.Maintenance = @()
-		# $DomainHash.Policies.Maintenance += Get-UcsMaintenancePolicy -Ucs $handle | Select-Object Name,Dn,UptimeDisr,Descr,SchedName
+		#--- Maintenance Policies ---#
+		$DomainHash.Policies.Maintenance = @()
+		$DomainHash.Policies.Maintenance += Get-UcsMaintenancePolicy -Ucs $handle | Select-Object Name,Dn,UptimeDisr,Descr,SchedName
 		
-		# #--- Host Firmware Packages ---#
-		# $DomainHash.Policies.FW_Packages = @()
-		# $DomainHash.Policies.FW_Packages += Get-UcsFirmwareComputeHostPack -Ucs $handle | Select Name,BladeBundleVersion,RackBundleVersion
+		#--- Host Firmware Packages ---#
+		$DomainHash.Policies.FW_Packages = @()
+		$DomainHash.Policies.FW_Packages += Get-UcsFirmwareComputeHostPack -Ucs $handle | Select Name,BladeBundleVersion,RackBundleVersion
 		
-		# #--- LDAP Policy Data ---#
-		# $DomainHash.Policies.LDAP_Providers = @()
-		# $DomainHash.Policies.LDAP_Providers += Get-UcsLdapProvider -Ucs $handle | Select-Object Name,Rootdn,Basedn,Attribute
-		# $mappingArray = @()
-		# $DomainHash.Policies.LDAP_Mappings = @()
-		# $mappingArray += Get-UcsLdapGroupMap -Ucs $handle
-		# $mappingArray | % {
-		# 	$mapHash = @{}
-		# 	$mapHash.Name = $_.Name
-		# 	$mapHash.Roles = ($_ | Get-UcsUserRole).Name
-		# 	$mapHash.Locales = ($_ | Get-UcsUserLocale).Name
-		# 	$DomainHash.Policies.LDAP_Mappings += $mapHash
-		# }
+		#--- LDAP Policy Data ---#
+		$DomainHash.Policies.LDAP_Providers = @()
+		$DomainHash.Policies.LDAP_Providers += Get-UcsLdapProvider -Ucs $handle | Select-Object Name,Rootdn,Basedn,Attribute
+		$mappingArray = @()
+		$DomainHash.Policies.LDAP_Mappings = @()
+		$mappingArray += Get-UcsLdapGroupMap -Ucs $handle
+		$mappingArray | % {
+			$mapHash = @{}
+			$mapHash.Name = $_.Name
+			$mapHash.Roles = ($_ | Get-UcsUserRole).Name
+			$mapHash.Locales = ($_ | Get-UcsUserLocale).Name
+			$DomainHash.Policies.LDAP_Mappings += $mapHash
+		}
 		
-		# #--- Boot Order Policies ---#
-		# $DomainHash.Policies.Boot_Policies = @()
-		# Get-UcsBootPolicy | % {
-		# 	#--- Store current pipe variable to local variable ---#
-		# 	$policy = $_
-		# 	#--- Hash variable for storing current boot data ---#
-		# 	$bootHash = @{}
-		# 	#--- Grab multiple boot policy data points from current policy ---#
-		# 	($bootHash.Dn,$bootHash.Description,$bootHash.BootMode,$bootHash.EnforceVnicName,$bootHash.Name,$bootHash.RebootOnUpdate,$bootHash.Owner) = $policy.Dn,$policy.Descr,$policy.BootMode,$policy.EnforceVnicName,$policy.Name,$policy.RebootOnUpdate,$policy.Owner
-		# 	#--- Array variable for string boot policy entries ---#
-		# 	$bootHash.Entries = @()
-		# 	#--- Get all child objects of the current policy and sort by boot order ---#
-		# 	$policy | Get-UcsChild | Sort-Object Order | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$entry = $_
-		# 		#===========================================================#
-		# 		#	Switch statement using the device type as the target	#
-		# 		#															#
-		# 		#	Variable Definitions:									#
-		# 		#		Level1 - VNIC, Order								#
-		# 		#		Level2 - Type, VNIC Name							#
-		# 		#		Level3 - Lun, Type, WWN								#
-		# 		#===========================================================#
-		# 		Switch ($entry.Type)
-		# 		{
-		# 			#--- Matches either local media or SAN storage ---#
-		# 			'storage' {
-		# 				#--- Get child data of boot entry for more detailed information ---#
-		# 				$entry | Get-UcsChild | Sort-Object Type | % {
-		# 					#--- Hash variable for storing current boot entry data ---#
-		# 					$entryHash = @{}
-		# 					#--- Checks if current entry is a SAN target ---#
-		# 					<#if($_.Rn -match "san")
-		# 					{
-		# 						#--- Grab Level1 data ---#
-		# 						$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 						#--- Array for storing Level2 data ---#
-		# 						$entryHash.Level2 = @()
-		# 						#--- Hash variable for storing current san entry data ---#
-		# 						$sanHash = @{}
-		# 						$sanHash.Type = $_.Type
-		# 						$sanHash.VnicName = $_.VnicName
-		# 						#--- Array variable for storing Level3 data ---#
-		# 						$sanHash.Level3 = @()
-		# 						#--- Get Level3 data from child object ---#
-		# 						$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
-		# 						#--- Add sanHash to Level2 array variable
-		# 						$entryHash.Level2 += $sanHash
-		# 						#--- Add current boot entry data to boot hash ---#
-		# 						$bootHash.Entries += $entryHash
-		# 					}
-		# 					#>
-		# 					#--- Checks if current entry is a local storage target ---#
-		# 					if($_.Rn -match "local-storage")
-		# 					{
-		# 						#--- Selects Level1 data ---#
-		# 						$_ | Get-UcsChild | Sort-Object Order | % {
-		# 							$entryHash = @{}
-		# 							$entryHash.Level1 = $_ | Select-Object Type,Order
-		# 							$bootHash.Entries += $entryHash
-		# 						}
-		# 					}									
-		# 				}
-		# 			}
-		# 			#--- Matches virtual media types ---#
-		# 			'virtual-media' {
-		# 				$entryHash = @{}
-		# 				$entryHash.Level1 = $entry | Select-Object Type,Order,Access
-		# 				if ($entryHash.Level1.Access -match 'read-only')
-		# 				{
-		# 					$entryHash.Level1.Type = 'CD/DVD'
-		# 				}
-		# 				else
-		# 				{
-		# 					$entryHash.Level1.Type = 'floppy'
-		# 				}
-		# 				$bootHash.Entries += $entryHash
-		# 			}
-		# 			#--- Matches lan boot types ---#
-		# 			'lan' {
-		# 				$entryHash = @{}
-		# 				$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 				$entryHash.Level2 = @()
-		# 				$entryHash.Level2 += $entry | Get-UcsChild | Select-Object VnicName,Type 
-		# 				$bootHash.Entries += $entryHash
-		# 			}
-		# 			#--- Matches SAN boot types ---#
-		# 			'san' {
-		# 				$entryHash = @{}
-		# 				#--- Grab Level 1 Data ---#
-		# 				$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 				#--- Array variable for Level 2 data ---#
-		# 				$entryHash.Level2 = @()
-		# 				#--- Iterate through each child object for Level 2 and 3 details ---#
-		# 				$entry | Get-UcsChild | Sort-Object Type | % {
-		# 					$sanHash = @{}
-		# 					$sanHash.Type = $_.Type
-		# 					$sanHash.VnicName = $_.VnicName
-		# 					$sanHash.Level3 = @()
-		# 					$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
-		# 					$entryHash.Level2 += $sanHash
-		# 				}
-		# 				#--- Add current boot entry data to boot hash ---#
-		# 				$bootHash.Entries += $entryHash
-		# 			}
-		# 			#--- Matches ISCSI boot types ---#
-		# 			'iscsi' {
-		# 				#--- Hash variable for storing iscsi boot entry data ---#
-		# 				$entryHash = @{}
-		# 				#--- Grab Level1 boot data ---#
-		# 				$entryHash.Level1 = $entry | Select-Object Type,Order
-		# 				#--- Array variable for storing Level2 boot data ---#
-		# 				$entryHash.Level2 = @()
-		# 				#--- Get all iSCSI Level2 data from child objects ---#
-		# 				$entryHash.Level2 += $entry | Get-UcsChild | Sort-Object Type | Select-Object ISCSIVnicName,Type
-		# 				#--- Add current boot entry data to boot hash ---#
-		# 				$bootHash.Entries += $entryHash
-		# 			}
-		# 		}
-		# 	}
-		# 	#--- Sort all boot entries by Level1 Order ---#
-		# 	$bootHash.Entries = $bootHash.Entries | Sort-Object {$_.Level1.Order}
-		# 	#--- Store boot entries to system boot policies array ---#
-		# 	$DomainHash.Policies.Boot_Policies+= $bootHash
-		# }
+		#--- Boot Order Policies ---#
+		$DomainHash.Policies.Boot_Policies = @()
+		Get-UcsBootPolicy | % {
+			#--- Store current pipe variable to local variable ---#
+			$policy = $_
+			#--- Hash variable for storing current boot data ---#
+			$bootHash = @{}
+			#--- Grab multiple boot policy data points from current policy ---#
+			($bootHash.Dn,$bootHash.Description,$bootHash.BootMode,$bootHash.EnforceVnicName,$bootHash.Name,$bootHash.RebootOnUpdate,$bootHash.Owner) = $policy.Dn,$policy.Descr,$policy.BootMode,$policy.EnforceVnicName,$policy.Name,$policy.RebootOnUpdate,$policy.Owner
+			#--- Array variable for string boot policy entries ---#
+			$bootHash.Entries = @()
+			#--- Get all child objects of the current policy and sort by boot order ---#
+			$policy | Get-UcsChild | Sort-Object Order | % {
+				#--- Store current pipe variable to local variable ---#
+				$entry = $_
+				#===========================================================#
+				#	Switch statement using the device type as the target	#
+				#															#
+				#	Variable Definitions:									#
+				#		Level1 - VNIC, Order								#
+				#		Level2 - Type, VNIC Name							#
+				#		Level3 - Lun, Type, WWN								#
+				#===========================================================#
+				Switch ($entry.Type)
+				{
+					#--- Matches either local media or SAN storage ---#
+					'storage' {
+						#--- Get child data of boot entry for more detailed information ---#
+						$entry | Get-UcsChild | Sort-Object Type | % {
+							#--- Hash variable for storing current boot entry data ---#
+							$entryHash = @{}
+							#--- Checks if current entry is a SAN target ---#
+							<#if($_.Rn -match "san")
+							{
+								#--- Grab Level1 data ---#
+								$entryHash.Level1 = $entry | Select-Object Type,Order
+								#--- Array for storing Level2 data ---#
+								$entryHash.Level2 = @()
+								#--- Hash variable for storing current san entry data ---#
+								$sanHash = @{}
+								$sanHash.Type = $_.Type
+								$sanHash.VnicName = $_.VnicName
+								#--- Array variable for storing Level3 data ---#
+								$sanHash.Level3 = @()
+								#--- Get Level3 data from child object ---#
+								$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
+								#--- Add sanHash to Level2 array variable
+								$entryHash.Level2 += $sanHash
+								#--- Add current boot entry data to boot hash ---#
+								$bootHash.Entries += $entryHash
+							}
+							#>
+							#--- Checks if current entry is a local storage target ---#
+							if($_.Rn -match "local-storage")
+							{
+								#--- Selects Level1 data ---#
+								$_ | Get-UcsChild | Sort-Object Order | % {
+									$entryHash = @{}
+									$entryHash.Level1 = $_ | Select-Object Type,Order
+									$bootHash.Entries += $entryHash
+								}
+							}									
+						}
+					}
+					#--- Matches virtual media types ---#
+					'virtual-media' {
+						$entryHash = @{}
+						$entryHash.Level1 = $entry | Select-Object Type,Order,Access
+						if ($entryHash.Level1.Access -match 'read-only')
+						{
+							$entryHash.Level1.Type = 'CD/DVD'
+						}
+						else
+						{
+							$entryHash.Level1.Type = 'floppy'
+						}
+						$bootHash.Entries += $entryHash
+					}
+					#--- Matches lan boot types ---#
+					'lan' {
+						$entryHash = @{}
+						$entryHash.Level1 = $entry | Select-Object Type,Order
+						$entryHash.Level2 = @()
+						$entryHash.Level2 += $entry | Get-UcsChild | Select-Object VnicName,Type 
+						$bootHash.Entries += $entryHash
+					}
+					#--- Matches SAN boot types ---#
+					'san' {
+						$entryHash = @{}
+						#--- Grab Level 1 Data ---#
+						$entryHash.Level1 = $entry | Select-Object Type,Order
+						#--- Array variable for Level 2 data ---#
+						$entryHash.Level2 = @()
+						#--- Iterate through each child object for Level 2 and 3 details ---#
+						$entry | Get-UcsChild | Sort-Object Type | % {
+							$sanHash = @{}
+							$sanHash.Type = $_.Type
+							$sanHash.VnicName = $_.VnicName
+							$sanHash.Level3 = @()
+							$sanHash.Level3 += $_ | Get-UcsChild | Sort-Object Type | Select-Object Lun,Type,Wwn
+							$entryHash.Level2 += $sanHash
+						}
+						#--- Add current boot entry data to boot hash ---#
+						$bootHash.Entries += $entryHash
+					}
+					#--- Matches ISCSI boot types ---#
+					'iscsi' {
+						#--- Hash variable for storing iscsi boot entry data ---#
+						$entryHash = @{}
+						#--- Grab Level1 boot data ---#
+						$entryHash.Level1 = $entry | Select-Object Type,Order
+						#--- Array variable for storing Level2 boot data ---#
+						$entryHash.Level2 = @()
+						#--- Get all iSCSI Level2 data from child objects ---#
+						$entryHash.Level2 += $entry | Get-UcsChild | Sort-Object Type | Select-Object ISCSIVnicName,Type
+						#--- Add current boot entry data to boot hash ---#
+						$bootHash.Entries += $entryHash
+					}
+				}
+			}
+			#--- Sort all boot entries by Level1 Order ---#
+			$bootHash.Entries = $bootHash.Entries | Sort-Object {$_.Level1.Order}
+			#--- Store boot entries to system boot policies array ---#
+			$DomainHash.Policies.Boot_Policies+= $bootHash
+		}
 			
-		# #--- End System Policies Collection ---#
+		#--- End System Policies Collection ---#
 		
-		# #--- Start ID Pool Collection ---#
-		# #--- External Mgmt IP Pool ---#
-		# $DomainHash.Policies.Mgmt_IP_Pool = @{}
-		# #--- Get the default external management pool ---#
-		# $mgmtPool = Get-ucsippoolblock -Ucs $handle -Filter "Dn -cmatch ext-mgmt"
-		# $DomainHash.Policies.Mgmt_IP_Pool.From = $mgmtPool.From
-		# $DomainHash.Policies.Mgmt_IP_Pool.To = $mgmtPool.To
-		# $parentPool = $mgmtPool | get-UcsParent
-		# $DomainHash.Policies.Mgmt_IP_Pool.Size = $parentPool.Size
-		# $DomainHash.Policies.Mgmt_IP_Pool.Assigned = $parentPool.Assigned
+		#--- Start ID Pool Collection ---#
+		#--- External Mgmt IP Pool ---#
+		$DomainHash.Policies.Mgmt_IP_Pool = @{}
+		#--- Get the default external management pool ---#
+		$mgmtPool = Get-ucsippoolblock -Ucs $handle -Filter "Dn -cmatch ext-mgmt"
+		$DomainHash.Policies.Mgmt_IP_Pool.From = $mgmtPool.From
+		$DomainHash.Policies.Mgmt_IP_Pool.To = $mgmtPool.To
+		$parentPool = $mgmtPool | get-UcsParent
+		$DomainHash.Policies.Mgmt_IP_Pool.Size = $parentPool.Size
+		$DomainHash.Policies.Mgmt_IP_Pool.Assigned = $parentPool.Assigned
 		
-		# #--- Mgmt IP Allocation ---#
-		# $DomainHash.Policies.Mgmt_IP_Allocation = @()
-		# $parentPool | Get-UcsIpPoolPooled -Filter "Assigned -ieq yes" | Select AssignedToDn,Id,Subnet,DefGw | % {
-		# 	$allocationHash = @{}
-		# 	$allocationHash.Dn = $_.AssignedToDn -replace "/mgmt/*.*", ""
-		# 	$allocationHash.IP = $_.Id
-		# 	$allocationHash.Subnet = $_.Subnet
-		# 	$allocationHash.GW = $_.DefGw
-		# 	$DomainHash.Policies.Mgmt_IP_Allocation += $allocationHash
-		# }
-		# #--- UUID ---#
-		# $DomainHash.Policies.UUID_Pools = @()
-		# $DomainHash.Policies.UUID_Pools += Get-UcsUuidSuffixPool -Ucs $handle | Select-Object Dn,Name,AssignmentOrder,Prefix,Size,Assigned
-		# $DomainHash.Policies.UUID_Assignments = @()
-		# $DomainHash.Policies.UUID_Assignments += Get-UcsUuidpoolAddr -Ucs $handle -Assigned yes | select-object AssignedToDn,Id | sort-object -property AssignedToDn
+		#--- Mgmt IP Allocation ---#
+		$DomainHash.Policies.Mgmt_IP_Allocation = @()
+		$parentPool | Get-UcsIpPoolPooled -Filter "Assigned -ieq yes" | Select AssignedToDn,Id,Subnet,DefGw | % {
+			$allocationHash = @{}
+			$allocationHash.Dn = $_.AssignedToDn -replace "/mgmt/*.*", ""
+			$allocationHash.IP = $_.Id
+			$allocationHash.Subnet = $_.Subnet
+			$allocationHash.GW = $_.DefGw
+			$DomainHash.Policies.Mgmt_IP_Allocation += $allocationHash
+		}
+		#--- UUID ---#
+		$DomainHash.Policies.UUID_Pools = @()
+		$DomainHash.Policies.UUID_Pools += Get-UcsUuidSuffixPool -Ucs $handle | Select-Object Dn,Name,AssignmentOrder,Prefix,Size,Assigned
+		$DomainHash.Policies.UUID_Assignments = @()
+		$DomainHash.Policies.UUID_Assignments += Get-UcsUuidpoolAddr -Ucs $handle -Assigned yes | select-object AssignedToDn,Id | sort-object -property AssignedToDn
 		
-		# #--- Server Pools ---#
-		# $DomainHash.Policies.Server_Pools = @()
-		# $DomainHash.Policies.Server_Pools += Get-UcsServerPool -Ucs $handle | Select-Object Dn,Name,Size,Assigned
-		# $DomainHash.Policies.Server_Pool_Assignments = @()
-		# $DomainHash.Policies.Server_Pool_Assignments += Get-UcsServerPoolAssignment -Ucs $handle | Select-Object Name,AssignedToDn
+		#--- Server Pools ---#
+		$DomainHash.Policies.Server_Pools = @()
+		$DomainHash.Policies.Server_Pools += Get-UcsServerPool -Ucs $handle | Select-Object Dn,Name,Size,Assigned
+		$DomainHash.Policies.Server_Pool_Assignments = @()
+		$DomainHash.Policies.Server_Pool_Assignments += Get-UcsServerPoolAssignment -Ucs $handle | Select-Object Name,AssignedToDn
 		
-		# #--- End ID Pools Collection ---#
+		#--- End ID Pools Collection ---#
 		
-		# #--- Start Service Profile data collection ---#
-		# #--- Get Service Profiles by Template ---#
+		#--- Start Service Profile data collection ---#
+		#--- Get Service Profiles by Template ---#
 		
-		# #--- Update current job progress ---#
-		# $Process_Hash.Progress[$domain] = 72
-		# #--- Grab all Service Profiles ---#
-		# $profiles = Get-ucsServiceProfile -Ucs $handle
-		# #--- Grab all performance statistics for future use ---#
-		# $statistics = Get-UcsStatistics -Ucs $handle
+		#--- Update current job progress ---#
+		$Process_Hash.Progress[$domain] = 72
+		#--- Grab all Service Profiles ---#
+		$profiles = Get-ucsServiceProfile -Ucs $handle
+		#--- Grab all performance statistics for future use ---#
+		$statistics = Get-UcsStatistics -Ucs $handle
 		
-		# #--- Array variable for storing template data ---#
-		# $templates = @()
-		# #--- Grab all service profile templates ---#
-		# $templates += ($profiles | ? {$_.Type -match "updating[-]template|initial[-]template"} | Select Name).Name
-		# #--- Add an empty template entry for profiles not bound to a template ---#
-		# $templates += ""
-		# #--- Iterate through templates and grab configuration data ---#
-		# $templates | % {
-		# 	#--- Grab the current template name ---#
-		# 	$templateName = $_
-		# 	#--- Unchanged copy of the current template name used later in the script ---#
-		# 	$profileCheck = $_
-		# 	#--- Find the profile template that matches the current name ---#
-		# 	$template = $profiles | ? {$_.Name -eq "$templateName"}
-		# 	#--- If template name is empty then set template name to "Unbound" ---#
-		# 	if ($templateName -eq "")
-		# 	{
-		# 		$templateName = "Unbound"
-		# 	}
-		# 	#--- Hash variable to store data for current templateName ---#
-		# 	$DomainHash.Profiles[$templateName] = @{}
-		# 	#--- Switch statement to format the template type ---#
-		# 	switch (($profiles | ? {$_.Name -ieq "$templateName"}).Type)
-		# 	{
-		# 			"updating-template"	{$DomainHash.Profiles[$templateName].Type = "Updating"}
-		# 			"initial-template"	{$DomainHash.Profiles[$templateName].Type = "Initial"}
-		# 			default {$DomainHash.Profiles[$templateName].Type = "N/A"}
-		# 	}
-		# 	#--- Template Details - General Tab ---#
+		#--- Array variable for storing template data ---#
+		$templates = @()
+		#--- Grab all service profile templates ---#
+		$templates += ($profiles | ? {$_.Type -match "updating[-]template|initial[-]template"} | Select Name).Name
+		#--- Add an empty template entry for profiles not bound to a template ---#
+		$templates += ""
+		#--- Iterate through templates and grab configuration data ---#
+		$templates | % {
+			#--- Grab the current template name ---#
+			$templateName = $_
+			#--- Unchanged copy of the current template name used later in the script ---#
+			$profileCheck = $_
+			#--- Find the profile template that matches the current name ---#
+			$template = $profiles | ? {$_.Name -eq "$templateName"}
+			#--- If template name is empty then set template name to "Unbound" ---#
+			if ($templateName -eq "")
+			{
+				$templateName = "Unbound"
+			}
+			#--- Hash variable to store data for current templateName ---#
+			$DomainHash.Profiles[$templateName] = @{}
+			#--- Switch statement to format the template type ---#
+			switch (($profiles | ? {$_.Name -ieq "$templateName"}).Type)
+			{
+					"updating-template"	{$DomainHash.Profiles[$templateName].Type = "Updating"}
+					"initial-template"	{$DomainHash.Profiles[$templateName].Type = "Initial"}
+					default {$DomainHash.Profiles[$templateName].Type = "N/A"}
+			}
+			#--- Template Details - General Tab ---#
 			
-		# 	#--- Hash variable for storing general template data ---#
-		# 	$DomainHash.Profiles[$templateName].General = @{}
-		# 	$DomainHash.Profiles[$templateName].General.Name = $templateName
-		# 	$DomainHash.Profiles[$templateName].General.Type = $DomainHash.Profiles[$templateName].Type
-		# 	$DomainHash.Profiles[$templateName].General.Description = $template.Descr
-		# 	$DomainHash.Profiles[$templateName].General.UUIDPool = $template.IdentPoolName
-		# 	$DomainHash.Profiles[$templateName].General.Boot_Policy = $template.OperBootPolicyName
-		# 	$DomainHash.Profiles[$templateName].General.PowerState = ($template | Get-UcsServerPower).State
-		# 	$DomainHash.Profiles[$templateName].General.MgmtAccessPolicy = $template.ExtIPState
-		# 	$DomainHash.Profiles[$templateName].General.Server_Pool = $template | Get-UcsServerPoolAssignment | Select Name,Qualifier,RestrictMigration
-		# 	$DomainHash.Profiles[$templateName].General.Maintenance_Policy = Get-UcsMaintenancePolicy -Ucs $handle -Filter "Dn -ieq $($template.OperMaintPolicyName)" | Select Name,Dn,Descr,UptimeDisr
+			#--- Hash variable for storing general template data ---#
+			$DomainHash.Profiles[$templateName].General = @{}
+			$DomainHash.Profiles[$templateName].General.Name = $templateName
+			$DomainHash.Profiles[$templateName].General.Type = $DomainHash.Profiles[$templateName].Type
+			$DomainHash.Profiles[$templateName].General.Description = $template.Descr
+			$DomainHash.Profiles[$templateName].General.UUIDPool = $template.IdentPoolName
+			$DomainHash.Profiles[$templateName].General.Boot_Policy = $template.OperBootPolicyName
+			$DomainHash.Profiles[$templateName].General.PowerState = ($template | Get-UcsServerPower).State
+			$DomainHash.Profiles[$templateName].General.MgmtAccessPolicy = $template.ExtIPState
+			$DomainHash.Profiles[$templateName].General.Server_Pool = $template | Get-UcsServerPoolAssignment | Select Name,Qualifier,RestrictMigration
+			$DomainHash.Profiles[$templateName].General.Maintenance_Policy = Get-UcsMaintenancePolicy -Ucs $handle -Filter "Dn -ieq $($template.OperMaintPolicyName)" | Select Name,Dn,Descr,UptimeDisr
 			
-		# 	#--- Template Details - Storage Tab ---#
+			#--- Template Details - Storage Tab ---#
 			
-		# 	#--- Hash variable for storing storage template data ---#
-		# 	$DomainHash.Profiles[$templateName].Storage = @{}
+			#--- Hash variable for storing storage template data ---#
+			$DomainHash.Profiles[$templateName].Storage = @{}
 			
-		# 	#--- Node WWN Configuration ---#
-		# 	$fcNode = $template | Get-UcsVnicFcNode
-		# 	#--- Grab VNIC connectivity  ---#
-		# 	$vnicConn = $template | Get-UcsVnicConnDef
-		# 	$DomainHash.Profiles[$templateName].Storage.Nwwn = $fcNode.Addr
-		# 	$DomainHash.Profiles[$templateName].Storage.Nwwn_Pool = $fcNode.IdentPoolName
-		# 	$DomainHash.Profiles[$templateName].Storage.Local_Disk_Config = Get-UcsLocalDiskConfigPolicy -Dn $template.OperLocalDiskPolicyName | Select Mode,ProtectConfig,XtraProperty
-		# 	$DomainHash.Profiles[$templateName].Storage.Connectivity_Policy = $vnicConn.SanConnPolicyName
-		# 	$DomainHash.Profiles[$templateName].Storage.Connectivity_Instance = $vnicConn.OperSanConnPolicyName
-		# 	#--- Array variable for storing HBA data ---#
-		# 	$DomainHash.Profiles[$templateName].Storage.Hbas = @()
-		# 	$template | Get-UcsVhba | % {
-		# 		$hbaHash = @{}
-		# 		$hbaHash.Name = $_.Name
-		# 		$hbaHash.Pwwn = $_.IdentPoolName
-		# 		$hbaHash.FabricId = $_.SwitchId
-		# 		$hbaHash.Desired_Order = $_.Order
-		# 		$hbaHash.Actual_Order = $_.OperOrder
-		# 		$hbaHash.Desired_Placement = $_.AdminVcon
-		# 		$hbaHash.Actual_Placement = $_.OperVcon
-		# 		$hbaHash.Vsan = ($_ | Get-UcsChild | Select Name).Name
-		# 		$DomainHash.Profiles[$templateName].Storage.Hbas += $hbaHash
-		# 	}
+			#--- Node WWN Configuration ---#
+			$fcNode = $template | Get-UcsVnicFcNode
+			#--- Grab VNIC connectivity  ---#
+			$vnicConn = $template | Get-UcsVnicConnDef
+			$DomainHash.Profiles[$templateName].Storage.Nwwn = $fcNode.Addr
+			$DomainHash.Profiles[$templateName].Storage.Nwwn_Pool = $fcNode.IdentPoolName
+			$DomainHash.Profiles[$templateName].Storage.Local_Disk_Config = Get-UcsLocalDiskConfigPolicy -Dn $template.OperLocalDiskPolicyName | Select Mode,ProtectConfig,XtraProperty
+			$DomainHash.Profiles[$templateName].Storage.Connectivity_Policy = $vnicConn.SanConnPolicyName
+			$DomainHash.Profiles[$templateName].Storage.Connectivity_Instance = $vnicConn.OperSanConnPolicyName
+			#--- Array variable for storing HBA data ---#
+			$DomainHash.Profiles[$templateName].Storage.Hbas = @()
+			$template | Get-UcsVhba | % {
+				$hbaHash = @{}
+				$hbaHash.Name = $_.Name
+				$hbaHash.Pwwn = $_.IdentPoolName
+				$hbaHash.FabricId = $_.SwitchId
+				$hbaHash.Desired_Order = $_.Order
+				$hbaHash.Actual_Order = $_.OperOrder
+				$hbaHash.Desired_Placement = $_.AdminVcon
+				$hbaHash.Actual_Placement = $_.OperVcon
+				$hbaHash.Vsan = ($_ | Get-UcsChild | Select Name).Name
+				$DomainHash.Profiles[$templateName].Storage.Hbas += $hbaHash
+			}
 			
-		# 	#--- Template Details - Network Tab ---#
+			#--- Template Details - Network Tab ---#
 			
-		# 	#--- Hash variable for storing template network configuration ---#
-		# 	$DomainHash.Profiles[$templateName].Network = @{}
-		# 	#--- Lan Connectivity Policy ---#
-		# 	$DomainHash.Profiles[$templateName].Network.Connectivity_Policy = $vnicConn.LanConnPolicyName
-		# 	$DomainHash.Profiles[$templateName].Network.DynamicVnic_Policy = $template.DynamicConPolicyName
-		# 	#--- Array variable for storing ---#
-		# 	$DomainHash.Profiles[$templateName].Network.Nics = @()
-		# 	#--- Iterate through each NIC and grab configuration details ---#
-		# 	$template | Get-UcsVnic | % {
-		# 		$nicHash = @{}
-		# 		$nicHash.Name = $_.Name
-		# 		$nicHash.Mac_Address = $_.Addr
-		# 		$nicHash.Desired_Order = $_.Order
-		# 		$nicHash.Actual_Order = $_.OperOrder
-		# 		$nicHash.Fabric_Id = $_.SwitchId
-		# 		$nicHash.Desired_Placement = $_.AdminVcon
-		# 		$nicHash.Actual_Placement = $_.OperVcon
-		# 		$nicHash.Adaptor_Profile = $_.AdaptorProfileName
-		# 		$nicHash.Control_Policy = $_.NwCtrlPolicyName
-		# 		#--- Array for storing VLANs ---#
-		# 		$nicHash.Vlans = @()
-		# 		#--- Grab all VLANs ---#
-		# 		$nicHash.Vlans += $_ | Get-UcsChild -ClassId VnicEtherIf | Select OperVnetName,Vnet,DefaultNet | Sort-Object {($_.Vnet) -as [int]}
-		# 		$DomainHash.Profiles[$templateName].Network.Nics += $nicHash
-		# 	}
+			#--- Hash variable for storing template network configuration ---#
+			$DomainHash.Profiles[$templateName].Network = @{}
+			#--- Lan Connectivity Policy ---#
+			$DomainHash.Profiles[$templateName].Network.Connectivity_Policy = $vnicConn.LanConnPolicyName
+			$DomainHash.Profiles[$templateName].Network.DynamicVnic_Policy = $template.DynamicConPolicyName
+			#--- Array variable for storing ---#
+			$DomainHash.Profiles[$templateName].Network.Nics = @()
+			#--- Iterate through each NIC and grab configuration details ---#
+			$template | Get-UcsVnic | % {
+				$nicHash = @{}
+				$nicHash.Name = $_.Name
+				$nicHash.Mac_Address = $_.Addr
+				$nicHash.Desired_Order = $_.Order
+				$nicHash.Actual_Order = $_.OperOrder
+				$nicHash.Fabric_Id = $_.SwitchId
+				$nicHash.Desired_Placement = $_.AdminVcon
+				$nicHash.Actual_Placement = $_.OperVcon
+				$nicHash.Adaptor_Profile = $_.AdaptorProfileName
+				$nicHash.Control_Policy = $_.NwCtrlPolicyName
+				#--- Array for storing VLANs ---#
+				$nicHash.Vlans = @()
+				#--- Grab all VLANs ---#
+				$nicHash.Vlans += $_ | Get-UcsChild -ClassId VnicEtherIf | Select OperVnetName,Vnet,DefaultNet | Sort-Object {($_.Vnet) -as [int]}
+				$DomainHash.Profiles[$templateName].Network.Nics += $nicHash
+			}
 	
-		# 	#--- Template Details - iSCSI vNICs Tab ---#
+			#--- Template Details - iSCSI vNICs Tab ---#
 			
-		# 	#--- Array variable for storing iSCSI configuration ---#
-		# 	$DomainHash.Profiles[$templateName].iSCSI = @()
-		# 	#--- Iterate through iSCSI interface configuration ---#
-		# 	$template | Get-UcsVnicIscsi | % {
-		# 		$iscsiHash = @{}
-		# 		$iscsiHash.Name = $_.Name
-		# 		$iscsiHash.Overlay = $_.VnicName
-		# 		$iscsiHash.Iqn = $_.InitiatorName
-		# 		$iscsiHash.Adapter_Policy = $_.AdaptorProfileName
-		# 		$iscsiHash.Mac = $_.Addr
-		# 		$iscsiHash.Vlan = ($_ | Get-UcsVnicVlan).VlanName
-		# 		$DomainHash.Profiles[$templateName].iSCSI += $iscsiHash
-		# 	}
+			#--- Array variable for storing iSCSI configuration ---#
+			$DomainHash.Profiles[$templateName].iSCSI = @()
+			#--- Iterate through iSCSI interface configuration ---#
+			$template | Get-UcsVnicIscsi | % {
+				$iscsiHash = @{}
+				$iscsiHash.Name = $_.Name
+				$iscsiHash.Overlay = $_.VnicName
+				$iscsiHash.Iqn = $_.InitiatorName
+				$iscsiHash.Adapter_Policy = $_.AdaptorProfileName
+				$iscsiHash.Mac = $_.Addr
+				$iscsiHash.Vlan = ($_ | Get-UcsVnicVlan).VlanName
+				$DomainHash.Profiles[$templateName].iSCSI += $iscsiHash
+			}
 	
-		# 	#--- Template Details - Policies Tab ---#
+			#--- Template Details - Policies Tab ---#
 			
-		# 	#--- Hash variable for storing template Policy configuration data ---#
-		# 	$DomainHash.Profiles[$templateName].Policies = @{}
-		# 	$DomainHash.Profiles[$templateName].Policies.Bios = $template.BiosProfileName
-		# 	$DomainHash.Profiles[$templateName].Policies.Fw = $template.HostFwPolicyName
-		# 	$DomainHash.Profiles[$templateName].Policies.Ipmi = $template.MgmtAccessPolicyName
-		# 	$DomainHash.Profiles[$templateName].Policies.Power = $template.PowerPolicyName
-		# 	$DomainHash.Profiles[$templateName].Policies.Scrub = $template.ScrubPolicyName
-		# 	$DomainHash.Profiles[$templateName].Policies.Sol = $template.SolPolicyName
-		# 	$DomainHash.Profiles[$templateName].Policies.Stats = $template.StatsPolicyName
+			#--- Hash variable for storing template Policy configuration data ---#
+			$DomainHash.Profiles[$templateName].Policies = @{}
+			$DomainHash.Profiles[$templateName].Policies.Bios = $template.BiosProfileName
+			$DomainHash.Profiles[$templateName].Policies.Fw = $template.HostFwPolicyName
+			$DomainHash.Profiles[$templateName].Policies.Ipmi = $template.MgmtAccessPolicyName
+			$DomainHash.Profiles[$templateName].Policies.Power = $template.PowerPolicyName
+			$DomainHash.Profiles[$templateName].Policies.Scrub = $template.ScrubPolicyName
+			$DomainHash.Profiles[$templateName].Policies.Sol = $template.SolPolicyName
+			$DomainHash.Profiles[$templateName].Policies.Stats = $template.StatsPolicyName
 	
-		# 	#--- Service Profile Instances ---#
+			#--- Service Profile Instances ---#
 			
-		# 	#--- Array variable for storing profiles tied to current template name ---#
-		# 	$DomainHash.Profiles[$templateName].Profiles = @()
-		# 	#--- Iterate through all profiles tied to the current template name ---#
-		# 	$profiles | ? {$_.SrcTemplName -ieq "$profileCheck" -and $_.Type -ieq "instance"} | % {
-		# 		#--- Store current pipe variable to local variable ---#
-		# 		$sp = $_
-		# 		#--- Hash variable for storing current profile configuration data ---#
-		# 		$profileHash = @{}
-		# 		$profileHash.Dn = $sp.Dn
-		# 		$profileHash.Service_Profile = $sp.Name
-		# 		$profileHash.UsrLbl = $sp.UsrLbl
-		# 		$profileHash.Assigned_Server = $sp.PnDn
-		# 		$profileHash.Assoc_State = $sp.AssocState
-		# 		$profileHash.Maint_Policy = $sp.MaintPolicyName
-		# 		$profileHash.Maint_PolicyInstance = $sp.OperMaintPolicyName
-		# 		$profileHash.FW_Policy = $sp.HostFwPolicyName
-		# 		$profileHash.BIOS_Policy = $sp.BiosProfileName
-		# 		$profileHash.Boot_Policy = $sp.OperBootPolicyName
+			#--- Array variable for storing profiles tied to current template name ---#
+			$DomainHash.Profiles[$templateName].Profiles = @()
+			#--- Iterate through all profiles tied to the current template name ---#
+			$profiles | ? {$_.SrcTemplName -ieq "$profileCheck" -and $_.Type -ieq "instance"} | % {
+				#--- Store current pipe variable to local variable ---#
+				$sp = $_
+				#--- Hash variable for storing current profile configuration data ---#
+				$profileHash = @{}
+				$profileHash.Dn = $sp.Dn
+				$profileHash.Service_Profile = $sp.Name
+				$profileHash.UsrLbl = $sp.UsrLbl
+				$profileHash.Assigned_Server = $sp.PnDn
+				$profileHash.Assoc_State = $sp.AssocState
+				$profileHash.Maint_Policy = $sp.MaintPolicyName
+				$profileHash.Maint_PolicyInstance = $sp.OperMaintPolicyName
+				$profileHash.FW_Policy = $sp.HostFwPolicyName
+				$profileHash.BIOS_Policy = $sp.BiosProfileName
+				$profileHash.Boot_Policy = $sp.OperBootPolicyName
 				
-		# 		#--- Service Profile Details - General Tab ---#
+				#--- Service Profile Details - General Tab ---#
 				
-		# 		#--- Hash variable for storing general profile configuration data ---#
-		# 		$profileHash.General = @{}
-		# 		$profileHash.General.Name = $sp.Name
-		# 		$profileHash.General.Overall_Status = $sp.operState
-		# 		$profileHash.General.AssignState = $sp.AssignState
-		# 		$profileHash.General.AssocState = $sp.AssocState
-		# 		$profileHash.General.Power_State = ($sp | Get-UcsChild -ClassId LsPower | Select State).State
+				#--- Hash variable for storing general profile configuration data ---#
+				$profileHash.General = @{}
+				$profileHash.General.Name = $sp.Name
+				$profileHash.General.Overall_Status = $sp.operState
+				$profileHash.General.AssignState = $sp.AssignState
+				$profileHash.General.AssocState = $sp.AssocState
+				$profileHash.General.Power_State = ($sp | Get-UcsChild -ClassId LsPower | Select State).State
 				
-		# 		$profileHash.General.UserLabel = $sp.UsrLbl
-		# 		$profileHash.General.Descr = $sp.Descr
-		# 		$profileHash.General.Owner = $sp.PolicyOwner
-		# 		$profileHash.General.Uuid = $sp.Uuid
-		# 		$profileHash.General.UuidPool = $sp.OperIdentPoolName
-		# 		$profileHash.General.Associated_Server = $sp.PnDn
-		# 		$profileHash.General.Template_Name = $templateName
-		# 		$profileHash.General.Template_Instance = $sp.OperSrcTemplName
-		# 		$profileHash.General.Assignment = @{}
-		# 		$pool = $sp | Get-UcsServerPoolAssignment
-		# 		if($pool.Count -gt 0)
-		# 		{
-		# 			$profileHash.General.Assignment.Server_Pool = $pool.Name
-		# 			$profileHash.General.Assignment.Qualifier = $pool.Qualifier
-		# 			$profileHash.General.Assignment.Restrict_Migration = $pool.RestrictMigration
-		# 		}
-		# 		else
-		# 		{
-		# 			$lsServer = $sp | Get-UcsLsBinding
-		# 			$profileHash.General.Assignment.Server = $lsServer.AssignedToDn
-		# 			$profileHash.General.Assignment.Restrict_Migration = $lsServer.RestrictMigration
-		# 		}
+				$profileHash.General.UserLabel = $sp.UsrLbl
+				$profileHash.General.Descr = $sp.Descr
+				$profileHash.General.Owner = $sp.PolicyOwner
+				$profileHash.General.Uuid = $sp.Uuid
+				$profileHash.General.UuidPool = $sp.OperIdentPoolName
+				$profileHash.General.Associated_Server = $sp.PnDn
+				$profileHash.General.Template_Name = $templateName
+				$profileHash.General.Template_Instance = $sp.OperSrcTemplName
+				$profileHash.General.Assignment = @{}
+				$pool = $sp | Get-UcsServerPoolAssignment
+				if($pool.Count -gt 0)
+				{
+					$profileHash.General.Assignment.Server_Pool = $pool.Name
+					$profileHash.General.Assignment.Qualifier = $pool.Qualifier
+					$profileHash.General.Assignment.Restrict_Migration = $pool.RestrictMigration
+				}
+				else
+				{
+					$lsServer = $sp | Get-UcsLsBinding
+					$profileHash.General.Assignment.Server = $lsServer.AssignedToDn
+					$profileHash.General.Assignment.Restrict_Migration = $lsServer.RestrictMigration
+				}
 				
-		# 		#--- Service Profile Details - Storage Tab ---#
-		# 		$profileHash.Storage = @{}
-		# 		$fcNode = $sp | Get-UcsVnicFcNode
-		# 		$vnicConn = $sp | Get-UcsVnicConnDef
-		# 		$profileHash.Storage.Nwwn = $fcNode.Addr
-		# 		$profileHash.Storage.Nwwn_Pool = $fcNode.IdentPoolName
-		# 		$profileHash.Storage.Local_Disk_Config = Get-UcsLocalDiskConfigPolicy -Dn $sp.OperLocalDiskPolicyName | Select Mode,ProtectConfig,XtraProperty
-		# 		$profileHash.Storage.Connectivity_Policy = $vnicConn.SanConnPolicyName
-		# 		$profileHash.Storage.Connectivity_Instance = $vnicConn.OperSanConnPolicyName
-		# 		#--- Array variable for storing HBA configuration data ---#
-		# 		$profileHash.Storage.Hbas = @()
-		# 		#--- Iterate through each HBA interface
-		# 		$sp | Get-UcsVhba | Sort-Object OperVcon,OperOrder | % {
-		# 			$hbaHash = @{}
-		# 			$hbaHash.Name = $_.Name
-		# 			$hbaHash.Pwwn = $_.Addr
-		# 			$hbaHash.FabricId = $_.SwitchId
-		# 			$hbaHash.Desired_Order = $_.Order
-		# 			$hbaHash.Actual_Order = $_.OperOrder
-		# 			$hbaHash.Desired_Placement = $_.AdminVcon
-		# 			$hbaHash.Actual_Placement = $_.OperVcon
-		# 			$hbaHash.EquipmentDn = $_.EquipmentDn
-		# 			$hbaHash.Vsan = ($_ | Get-UcsChild | Select OperVnetName).OperVnetName
-		# 			$profileHash.Storage.Hbas += $hbaHash
-		# 		}
+				#--- Service Profile Details - Storage Tab ---#
+				$profileHash.Storage = @{}
+				$fcNode = $sp | Get-UcsVnicFcNode
+				$vnicConn = $sp | Get-UcsVnicConnDef
+				$profileHash.Storage.Nwwn = $fcNode.Addr
+				$profileHash.Storage.Nwwn_Pool = $fcNode.IdentPoolName
+				$profileHash.Storage.Local_Disk_Config = Get-UcsLocalDiskConfigPolicy -Dn $sp.OperLocalDiskPolicyName | Select Mode,ProtectConfig,XtraProperty
+				$profileHash.Storage.Connectivity_Policy = $vnicConn.SanConnPolicyName
+				$profileHash.Storage.Connectivity_Instance = $vnicConn.OperSanConnPolicyName
+				#--- Array variable for storing HBA configuration data ---#
+				$profileHash.Storage.Hbas = @()
+				#--- Iterate through each HBA interface
+				$sp | Get-UcsVhba | Sort-Object OperVcon,OperOrder | % {
+					$hbaHash = @{}
+					$hbaHash.Name = $_.Name
+					$hbaHash.Pwwn = $_.Addr
+					$hbaHash.FabricId = $_.SwitchId
+					$hbaHash.Desired_Order = $_.Order
+					$hbaHash.Actual_Order = $_.OperOrder
+					$hbaHash.Desired_Placement = $_.AdminVcon
+					$hbaHash.Actual_Placement = $_.OperVcon
+					$hbaHash.EquipmentDn = $_.EquipmentDn
+					$hbaHash.Vsan = ($_ | Get-UcsChild | Select OperVnetName).OperVnetName
+					$profileHash.Storage.Hbas += $hbaHash
+				}
 				
-		# 		#--- Service Profile Details - Network Tab ---#
-		# 		$profileHash.Network = @{}
-		# 		$profileHash.Network.Connectivity_Policy = $vnicConn.LanConnPolicyName
-		# 		#--- Array variable for storing NIC configuration data ---#
-		# 		$profileHash.Network.Nics = @()
-		# 		#--- Iterate through each vNIC and grab configuration data ---#
-		# 		$sp | Get-UcsVnic | % {
-		# 			$nicHash = @{}
-		# 			$nicHash.Name = $_.Name
-		# 			$nicHash.Mac_Address = $_.Addr
-		# 			$nicHash.Desired_Order = $_.Order
-		# 			$nicHash.Actual_Order = $_.OperOrder
-		# 			$nicHash.Fabric_Id = $_.SwitchId
-		# 			$nicHash.Desired_Placement = $_.AdminVcon
-		# 			$nicHash.Actual_Placement = $_.OperVcon
-		# 			$nicHash.Mtu = $_.Mtu
-		# 			$nicHash.EquipmentDn = $_.EquipmentDn
-		# 			$nicHash.Adaptor_Profile = $_.AdaptorProfileName
-		# 			$nicHash.Control_Policy = $_.NwCtrlPolicyName
-		# 			$nicHash.Qos = $_.OperQosPolicyName
-		# 			$nicHash.Vlans = @()
-		# 			$nicHash.Vlans += $_ | Get-UcsChild -ClassId VnicEtherIf | Select OperVnetName,Vnet,DefaultNet | Sort-Object {($_.Vnet) -as [int]}
-		# 			$profileHash.Network.Nics += $nicHash
-		# 		}
+				#--- Service Profile Details - Network Tab ---#
+				$profileHash.Network = @{}
+				$profileHash.Network.Connectivity_Policy = $vnicConn.LanConnPolicyName
+				#--- Array variable for storing NIC configuration data ---#
+				$profileHash.Network.Nics = @()
+				#--- Iterate through each vNIC and grab configuration data ---#
+				$sp | Get-UcsVnic | % {
+					$nicHash = @{}
+					$nicHash.Name = $_.Name
+					$nicHash.Mac_Address = $_.Addr
+					$nicHash.Desired_Order = $_.Order
+					$nicHash.Actual_Order = $_.OperOrder
+					$nicHash.Fabric_Id = $_.SwitchId
+					$nicHash.Desired_Placement = $_.AdminVcon
+					$nicHash.Actual_Placement = $_.OperVcon
+					$nicHash.Mtu = $_.Mtu
+					$nicHash.EquipmentDn = $_.EquipmentDn
+					$nicHash.Adaptor_Profile = $_.AdaptorProfileName
+					$nicHash.Control_Policy = $_.NwCtrlPolicyName
+					$nicHash.Qos = $_.OperQosPolicyName
+					$nicHash.Vlans = @()
+					$nicHash.Vlans += $_ | Get-UcsChild -ClassId VnicEtherIf | Select OperVnetName,Vnet,DefaultNet | Sort-Object {($_.Vnet) -as [int]}
+					$profileHash.Network.Nics += $nicHash
+				}
 				
-		# 		#--- Service Profile Details - iSCSI vNICs ---#
-		# 		$profileHash.iSCSI = @()
-		# 		#--- Iterate through all iSCSI interfaces and grab configuration data ---#
-		# 		$sp | Get-UcsVnicIscsi | % {
-		# 			$iscsiHash = @{}
-		# 			$iscsiHash.Name = $_.Name
-		# 			$iscsiHash.Overlay = $_.VnicName
-		# 			$iscsiHash.Iqn = $_.InitiatorName
-		# 			$iscsiHash.Adapter_Policy = $_.AdaptorProfileName
-		# 			$iscsiHash.Mac = $_.Addr
-		# 			$iscsiHash.Vlan = ($_ | Get-UcsVnicVlan).VlanName
-		# 			$profileHash.iSCSI += $iscsiHash
-		# 		}
+				#--- Service Profile Details - iSCSI vNICs ---#
+				$profileHash.iSCSI = @()
+				#--- Iterate through all iSCSI interfaces and grab configuration data ---#
+				$sp | Get-UcsVnicIscsi | % {
+					$iscsiHash = @{}
+					$iscsiHash.Name = $_.Name
+					$iscsiHash.Overlay = $_.VnicName
+					$iscsiHash.Iqn = $_.InitiatorName
+					$iscsiHash.Adapter_Policy = $_.AdaptorProfileName
+					$iscsiHash.Mac = $_.Addr
+					$iscsiHash.Vlan = ($_ | Get-UcsVnicVlan).VlanName
+					$profileHash.iSCSI += $iscsiHash
+				}
 				
-		# 		#--- Service Profile Details - Performance ---#
-		# 		$profileHash.Performance = @{}
-		# 		#--- Only grab performance data if the profile is associated ---#
-		# 		if($profileHash.Assoc_State -eq 'associated')
-		# 		{
-		# 			#--- Get the collection time interval for adapter performance ---#
-		# 			$interval = (Get-UcsCollectionPolicy -Name "adapter" | Select CollectionInterval).CollectionInterval
-		# 			#--- Normalize collection interval to seconds ---#
-		# 			Switch -wildcard (($interval -split '[0-9]')[-1])
-		# 			{
-		# 				"minute*" { $profileHash.Performance.Interval = ((($interval -split '[a-z]')[0]) -as [int]) * 60 }
-		# 				"second*" { $profileHash.Performance.Interval = ((($interval -split '[a-z]')[0]) -as [int]) }
-		# 			}
-		# 			$profileHash.Performance.vNics = @{}
-		# 			$profileHash.Performance.vHbas = @{}
-		# 			#--- Iterate through each vHBA and grab performance data ---#
-		# 			$profileHash.Storage.Hbas | % {
-		# 				$hba = $_
-		# 				$profileHash.Performance.vHbas[$hba.Name] = $statistics | ? {$_.Dn -cmatch $hba.EquipmentDn -and $_.Rn -ieq "vnic-stats"} | Select-Object BytesRx,BytesRxDeltaAvg,BytesTx,BytesTxDeltaAvg,PacketsRx,PacketsRxDeltaAvg,PacketsTx,PacketsTxDeltaAvg
-		# 			}
-		# 			#--- Iterate through each vNIC and grab performance data ---#
-		# 			$profileHash.Network.Nics | % {
-		# 				$nic = $_
-		# 				$profileHash.Performance.vNics[$nic.Name] = $statistics | ? {$_.Dn -cmatch $nic.EquipmentDn -and $_.Rn -ieq "vnic-stats"} | Select-Object BytesRx,BytesRxDeltaAvg,BytesTx,BytesTxDeltaAvg,PacketsRx,PacketsRxDeltaAvg,PacketsTx,PacketsTxDeltaAvg
-		# 			}
-		# 		}
+				#--- Service Profile Details - Performance ---#
+				$profileHash.Performance = @{}
+				#--- Only grab performance data if the profile is associated ---#
+				if($profileHash.Assoc_State -eq 'associated')
+				{
+					#--- Get the collection time interval for adapter performance ---#
+					$interval = (Get-UcsCollectionPolicy -Name "adapter" | Select CollectionInterval).CollectionInterval
+					#--- Normalize collection interval to seconds ---#
+					Switch -wildcard (($interval -split '[0-9]')[-1])
+					{
+						"minute*" { $profileHash.Performance.Interval = ((($interval -split '[a-z]')[0]) -as [int]) * 60 }
+						"second*" { $profileHash.Performance.Interval = ((($interval -split '[a-z]')[0]) -as [int]) }
+					}
+					$profileHash.Performance.vNics = @{}
+					$profileHash.Performance.vHbas = @{}
+					#--- Iterate through each vHBA and grab performance data ---#
+					$profileHash.Storage.Hbas | % {
+						$hba = $_
+						$profileHash.Performance.vHbas[$hba.Name] = $statistics | ? {$_.Dn -cmatch $hba.EquipmentDn -and $_.Rn -ieq "vnic-stats"} | Select-Object BytesRx,BytesRxDeltaAvg,BytesTx,BytesTxDeltaAvg,PacketsRx,PacketsRxDeltaAvg,PacketsTx,PacketsTxDeltaAvg
+					}
+					#--- Iterate through each vNIC and grab performance data ---#
+					$profileHash.Network.Nics | % {
+						$nic = $_
+						$profileHash.Performance.vNics[$nic.Name] = $statistics | ? {$_.Dn -cmatch $nic.EquipmentDn -and $_.Rn -ieq "vnic-stats"} | Select-Object BytesRx,BytesRxDeltaAvg,BytesTx,BytesTxDeltaAvg,PacketsRx,PacketsRxDeltaAvg,PacketsTx,PacketsTxDeltaAvg
+					}
+				}
 				
-		# 		#--- Service Profile Policies ---#
-		# 		$profileHash.Policies = @{}
-		# 		$profileHash.Policies.Bios = $sp.BiosProfileName
-		# 		$profileHash.Policies.Fw = $sp.HostFwPolicyName
-		# 		$profileHash.Policies.Ipmi = $sp.MgmtAccessPolicyName
-		# 		$profileHash.Policies.Power = $sp.PowerPolicyName
-		# 		$profileHash.Policies.Scrub = $sp.ScrubPolicyName
-		# 		$profileHash.Policies.Sol = $sp.SolPolicyName
-		# 		$profileHash.Policies.Stats = $sp.StatsPolicyName
+				#--- Service Profile Policies ---#
+				$profileHash.Policies = @{}
+				$profileHash.Policies.Bios = $sp.BiosProfileName
+				$profileHash.Policies.Fw = $sp.HostFwPolicyName
+				$profileHash.Policies.Ipmi = $sp.MgmtAccessPolicyName
+				$profileHash.Policies.Power = $sp.PowerPolicyName
+				$profileHash.Policies.Scrub = $sp.ScrubPolicyName
+				$profileHash.Policies.Sol = $sp.SolPolicyName
+				$profileHash.Policies.Stats = $sp.StatsPolicyName
 				
-		# 		#--- Add current profile to template profile array ---#
-		# 		$DomainHash.Profiles[$templateName].Profiles += $profileHash
-		# 	}
+				#--- Add current profile to template profile array ---#
+				$DomainHash.Profiles[$templateName].Profiles += $profileHash
+			}
 			
-		# }
-		# #--- End Service Profile Collection ---#
+		}
+		#--- End Service Profile Collection ---#
 		
-		# #--- Start LAN Configuration ---#
-		# #--- Get the collection time interval for port performance ---#
-		# $DomainHash.Collection = @{}
-		# $interval = (Get-UcsCollectionPolicy -Name "port" | Select CollectionInterval).CollectionInterval
-		# #--- Normalize collection interval to seconds ---#
-		# Switch -wildcard (($interval -split '[0-9]')[-1])
-		# {
-		# 	"minute*" { $DomainHash.Collection.Port = ((($interval -split '[a-z]')[0]) -as [int]) * 60 }
-		# 	"second*" { $DomainHash.Collection.Port = ((($interval -split '[a-z]')[0]) -as [int]) }
-		# }
-		# #--- Uplink and Server Ports with Performance ---#
-		# $DomainHash.Lan.UplinkPorts = @()
-		# $DomainHash.Lan.ServerPorts = @()
-		# #--- Iterate through each FI and collect port performance data based on port role ---#
-		# $DomainHash.Inventory.FIs | % {
-		# 	#--- Uplink Ports ---#
-		# 	$_.Ports | ? IfRole -eq network | % {
-		# 		$port = $_
-		# 		$uplinkHash = @{}
-		# 		$uplinkHash.Dn = $_.Dn
-		# 		$uplinkHash.PortId = $_.PortId
-		# 		$uplinkHash.SlotId = $_.SlotId
-		# 		$uplinkHash.Fabric_Id = $_.SwitchId
-		# 		$uplinkHash.Mac = $_.Mac
-		# 		$uplinkHash.Speed = $_.OperSpeed
-		# 		$uplinkHash.IfType = $_.IfType
-		# 		$uplinkHash.XcvrType = $_.XcvrType
-		# 		$uplinkHash.Performance = @{}
-		# 		$uplinkHash.Performance.Rx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "rx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
-		# 		$uplinkHash.Performance.Tx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "tx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
-		# 		$uplinkHash.Status = $_.OperState
-		# 		$uplinkHash.State = $_.AdminState
-		# 		$DomainHash.Lan.UplinkPorts += $uplinkHash
-		# 	}
-		# 	#--- Server Ports ---#
-		# 	$_.Ports | ? IfRole -eq server | % {
-		# 		$port = $_
-		# 		$serverPortHash = @{}
-		# 		$serverPortHash.Dn = $_.Dn
-		# 		$serverPortHash.PortId = $_.PortId
-		# 		$serverPortHash.SlotId = $_.SlotId
-		# 		$serverPortHash.Fabric_Id = $_.SwitchId
-		# 		$serverPortHash.Mac = $_.Mac
-		# 		$serverPortHash.Speed = $_.OperSpeed
-		# 		$serverPortHash.IfType = $_.IfType
-		# 		$serverPortHash.XcvrType = $_.XcvrType
-		# 		$serverPortHash.Performance = @{}
-		# 		$serverPortHash.Performance.Rx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "rx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
-		# 		$serverPortHash.Performance.Tx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "tx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
-		# 		$serverPortHash.Status = $_.OperState
-		# 		$serverPortHash.State = $_.AdminState
-		# 		$DomainHash.Lan.ServerPorts += $serverPortHash
-		# 	}
-		# }
-		# #--- Fabric PortChannels ---#
-		# $DomainHash.Lan.FabricPcs = @()
-		# Get-UcsFabricServerPortChannel -Ucs $handle | % {
-		# 	$uplinkHash = @{}
-		# 	$uplinkHash.Name = $_.Rn
-		# 	$uplinkHash.Chassis = $_.ChassisId
-		# 	$uplinkHash.Fabric_Id = $_.SwitchId
-		# 	$uplinkHash.Members = $_ | Get-UcsFabricServerPortChannelMember | Select EpDn,PeerDn
-		# 	$DomainHash.Lan.FabricPcs += $uplinkHash
-		# }
-		# #--- Uplink PortChannels ---#
-		# $DomainHash.Lan.UplinkPcs = @()
-		# Get-UcsUplinkPortChannel -Ucs $handle | % {
-		# 	$uplinkHash = @{}
-		# 	$uplinkHash.Name = $_.Rn
-		# 	$uplinkHash.Members = $_ | Get-UcsUplinkPortChannelMember | Select EpDn,PeerDn
-		# 	$DomainHash.Lan.UplinkPcs += $uplinkHash
-		# }
-		# #--- Qos Domain Policies ---#
-		# $DomainHash.Lan.Qos = @{}
-		# $DomainHash.Lan.Qos.Domain = @()
-		# $DomainHash.Lan.Qos.Domain += Get-UcsQosClass -Ucs $handle | Sort-Object Cos -Descending
-		# $DomainHash.Lan.Qos.Domain += Get-UcsBestEffortQosClass -Ucs $handle
-		# $DomainHash.Lan.Qos.Domain += Get-UcsFcQosClass -Ucs $handle
+		#--- Start LAN Configuration ---#
+		#--- Get the collection time interval for port performance ---#
+		$DomainHash.Collection = @{}
+		$interval = (Get-UcsCollectionPolicy -Name "port" | Select CollectionInterval).CollectionInterval
+		#--- Normalize collection interval to seconds ---#
+		Switch -wildcard (($interval -split '[0-9]')[-1])
+		{
+			"minute*" { $DomainHash.Collection.Port = ((($interval -split '[a-z]')[0]) -as [int]) * 60 }
+			"second*" { $DomainHash.Collection.Port = ((($interval -split '[a-z]')[0]) -as [int]) }
+		}
+		#--- Uplink and Server Ports with Performance ---#
+		$DomainHash.Lan.UplinkPorts = @()
+		$DomainHash.Lan.ServerPorts = @()
+		#--- Iterate through each FI and collect port performance data based on port role ---#
+		$DomainHash.Inventory.FIs | % {
+			#--- Uplink Ports ---#
+			$_.Ports | ? IfRole -eq network | % {
+				$port = $_
+				$uplinkHash = @{}
+				$uplinkHash.Dn = $_.Dn
+				$uplinkHash.PortId = $_.PortId
+				$uplinkHash.SlotId = $_.SlotId
+				$uplinkHash.Fabric_Id = $_.SwitchId
+				$uplinkHash.Mac = $_.Mac
+				$uplinkHash.Speed = $_.OperSpeed
+				$uplinkHash.IfType = $_.IfType
+				$uplinkHash.XcvrType = $_.XcvrType
+				$uplinkHash.Performance = @{}
+				$uplinkHash.Performance.Rx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "rx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
+				$uplinkHash.Performance.Tx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "tx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
+				$uplinkHash.Status = $_.OperState
+				$uplinkHash.State = $_.AdminState
+				$DomainHash.Lan.UplinkPorts += $uplinkHash
+			}
+			#--- Server Ports ---#
+			$_.Ports | ? IfRole -eq server | % {
+				$port = $_
+				$serverPortHash = @{}
+				$serverPortHash.Dn = $_.Dn
+				$serverPortHash.PortId = $_.PortId
+				$serverPortHash.SlotId = $_.SlotId
+				$serverPortHash.Fabric_Id = $_.SwitchId
+				$serverPortHash.Mac = $_.Mac
+				$serverPortHash.Speed = $_.OperSpeed
+				$serverPortHash.IfType = $_.IfType
+				$serverPortHash.XcvrType = $_.XcvrType
+				$serverPortHash.Performance = @{}
+				$serverPortHash.Performance.Rx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "rx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
+				$serverPortHash.Performance.Tx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "tx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
+				$serverPortHash.Status = $_.OperState
+				$serverPortHash.State = $_.AdminState
+				$DomainHash.Lan.ServerPorts += $serverPortHash
+			}
+		}
+		#--- Fabric PortChannels ---#
+		$DomainHash.Lan.FabricPcs = @()
+		Get-UcsFabricServerPortChannel -Ucs $handle | % {
+			$uplinkHash = @{}
+			$uplinkHash.Name = $_.Rn
+			$uplinkHash.Chassis = $_.ChassisId
+			$uplinkHash.Fabric_Id = $_.SwitchId
+			$uplinkHash.Members = $_ | Get-UcsFabricServerPortChannelMember | Select EpDn,PeerDn
+			$DomainHash.Lan.FabricPcs += $uplinkHash
+		}
+		#--- Uplink PortChannels ---#
+		$DomainHash.Lan.UplinkPcs = @()
+		Get-UcsUplinkPortChannel -Ucs $handle | % {
+			$uplinkHash = @{}
+			$uplinkHash.Name = $_.Rn
+			$uplinkHash.Members = $_ | Get-UcsUplinkPortChannelMember | Select EpDn,PeerDn
+			$DomainHash.Lan.UplinkPcs += $uplinkHash
+		}
+		#--- Qos Domain Policies ---#
+		$DomainHash.Lan.Qos = @{}
+		$DomainHash.Lan.Qos.Domain = @()
+		$DomainHash.Lan.Qos.Domain += Get-UcsQosClass -Ucs $handle | Sort-Object Cos -Descending
+		$DomainHash.Lan.Qos.Domain += Get-UcsBestEffortQosClass -Ucs $handle
+		$DomainHash.Lan.Qos.Domain += Get-UcsFcQosClass -Ucs $handle
 		
-		# #--- Qos Policies ---#
-		# $DomainHash.Lan.Qos.Policies = @()
-		# Get-UcsQosPolicy -Ucs $handle | % {
-		# 	$qosHash = @{}
-		# 	$qosHash.Name = $_.Name
-		# 	$qosHash.Owner = $_.PolicyOwner
-		# 	($qoshash.Burst,$qoshash.HostControl,$qoshash.Prio,$qoshash.Rate) = $_ | Get-UcsChild -ClassId EpqosEgress | Select Burst,HostControl,Prio,Rate | % {$_.Burst,$_.HostControl,$_.Prio,$_.Rate}
-		# 	$DomainHash.Lan.Qos.Policies += $qosHash
-		# }
+		#--- Qos Policies ---#
+		$DomainHash.Lan.Qos.Policies = @()
+		Get-UcsQosPolicy -Ucs $handle | % {
+			$qosHash = @{}
+			$qosHash.Name = $_.Name
+			$qosHash.Owner = $_.PolicyOwner
+			($qoshash.Burst,$qoshash.HostControl,$qoshash.Prio,$qoshash.Rate) = $_ | Get-UcsChild -ClassId EpqosEgress | Select Burst,HostControl,Prio,Rate | % {$_.Burst,$_.HostControl,$_.Prio,$_.Rate}
+			$DomainHash.Lan.Qos.Policies += $qosHash
+		}
 		
-		# #--- VLANs ---#
-		# $DomainHash.Lan.Vlans = @()
-		# $DomainHash.Lan.Vlans += Get-UcsVlan -Ucs $handle | where {$_.IfRole -eq "network"} | Sort-Object -Property Ucs,Id
+		#--- VLANs ---#
+		$DomainHash.Lan.Vlans = @()
+		$DomainHash.Lan.Vlans += Get-UcsVlan -Ucs $handle | where {$_.IfRole -eq "network"} | Sort-Object -Property Ucs,Id
 		
-		# #--- Network Control Policies ---#
-		# $DomainHash.Lan.Control_Policies = @()
-		# $DomainHash.Lan.Control_Policies += Get-UcsNetworkControlPolicy -Ucs $handle | ? Dn -ne "fabric/eth-estc/nwctrl-default" | Select Cdp,MacRegisterMode,Name,UplinkFailAction,Descr,Dn,PolicyOwner
+		#--- Network Control Policies ---#
+		$DomainHash.Lan.Control_Policies = @()
+		$DomainHash.Lan.Control_Policies += Get-UcsNetworkControlPolicy -Ucs $handle | ? Dn -ne "fabric/eth-estc/nwctrl-default" | Select Cdp,MacRegisterMode,Name,UplinkFailAction,Descr,Dn,PolicyOwner
 		
-		# #--- Mac Address Pool Definitions ---#
-		# $DomainHash.Lan.Mac_Pools = @()
-		# Get-UcsMacPool -Ucs $handle | % {
-		# 	$macHash = @{}
-		# 	$macHash.Name = $_.Name
-		# 	$macHash.Assigned = $_.Assigned
-		# 	$macHash.Size = $_.Size
-		# 	($macHash.From,$macHash.To) = $_ | Get-UcsMacMemberBlock | Select From,To | % {$_.From,$_.To}
-		# 	$DomainHash.Lan.Mac_Pools += $macHash
-		# }
+		#--- Mac Address Pool Definitions ---#
+		$DomainHash.Lan.Mac_Pools = @()
+		Get-UcsMacPool -Ucs $handle | % {
+			$macHash = @{}
+			$macHash.Name = $_.Name
+			$macHash.Assigned = $_.Assigned
+			$macHash.Size = $_.Size
+			($macHash.From,$macHash.To) = $_ | Get-UcsMacMemberBlock | Select From,To | % {$_.From,$_.To}
+			$DomainHash.Lan.Mac_Pools += $macHash
+		}
 		
-		# #--- Mac Address Pool Allocations ---#
-		# $DomainHash.Lan.Mac_Allocations = @()
-		# $DomainHash.Lan.Mac_Allocations += Get-UcsMacPoolPooled | Select Id,Assigned,AssignedToDn
+		#--- Mac Address Pool Allocations ---#
+		$DomainHash.Lan.Mac_Allocations = @()
+		$DomainHash.Lan.Mac_Allocations += Get-UcsMacPoolPooled | Select Id,Assigned,AssignedToDn
 		
-		# #--- Ip Pool Definitions ---#
-		# $DomainHash.Lan.Ip_Pools = @()
-		# Get-UcsIpPool -Ucs $handle | % {
-		# 	$ipHash = @{}
-		# 	$ipHash.Name = $_.Name
-		# 	$ipHash.Assigned = $_.Assigned
-		# 	$ipHash.Size = $_.Size
-		# 	($ipHash.From,$ipHash.To,$ipHash.DefGw,$ipHash.Subnet,$ipHash.PrimDns) = $_ | Get-UcsIpPoolBlock | Select From,To,DefGw,PrimDns,Subnet | % {$_.From,$_.To,$_.DefGw,$_.Subnet,$_.PrimDns}
-		# 	$DomainHash.Lan.Ip_Pools += $ipHash
-		# }
+		#--- Ip Pool Definitions ---#
+		$DomainHash.Lan.Ip_Pools = @()
+		Get-UcsIpPool -Ucs $handle | % {
+			$ipHash = @{}
+			$ipHash.Name = $_.Name
+			$ipHash.Assigned = $_.Assigned
+			$ipHash.Size = $_.Size
+			($ipHash.From,$ipHash.To,$ipHash.DefGw,$ipHash.Subnet,$ipHash.PrimDns) = $_ | Get-UcsIpPoolBlock | Select From,To,DefGw,PrimDns,Subnet | % {$_.From,$_.To,$_.DefGw,$_.Subnet,$_.PrimDns}
+			$DomainHash.Lan.Ip_Pools += $ipHash
+		}
 		
-		# #--- Ip Pool Allocations ---#
-		# $DomainHash.Lan.Ip_Allocations = @()
-		# $DomainHash.Lan.Ip_Allocations += Get-UcsIpPoolPooled | Select AssignedToDn,DefGw,Id,PrimDns,Subnet,Assigned
+		#--- Ip Pool Allocations ---#
+		$DomainHash.Lan.Ip_Allocations = @()
+		$DomainHash.Lan.Ip_Allocations += Get-UcsIpPoolPooled | Select AssignedToDn,DefGw,Id,PrimDns,Subnet,Assigned
 		
-		# #--- vNic Templates ---#
-		# $DomainHash.Lan.vNic_Templates = @()
-		# $DomainHash.Lan.vNic_Templates += Get-UcsVnicTemplate -Ucs $handle | Select-Object Ucs,Dn,Name,Descr,SwitchId,TemplType,IdentPoolName,Mtu,NwCtrlPolicyName,QosPolicyName
+		#--- vNic Templates ---#
+		$DomainHash.Lan.vNic_Templates = @()
+		$DomainHash.Lan.vNic_Templates += Get-UcsVnicTemplate -Ucs $handle | Select-Object Ucs,Dn,Name,Descr,SwitchId,TemplType,IdentPoolName,Mtu,NwCtrlPolicyName,QosPolicyName
 		
-		# #--- End Lan Configuration ---#
+		#--- End Lan Configuration ---#
 
-		# #--- Start SAN Configuration ---#
-		# #--- Uplink and Storage Ports ---#
-		# $DomainHash.San.UplinkFcoePorts = @()
-		# $DomainHash.San.UplinkFcPorts = @()
-		# $DomainHash.San.StoragePorts = @()
-		# #--- Iterate through each FI and grab san performance data based on port role ---#
-		# $DomainHash.Inventory.FIs | % {
-		# 	#--- SAN uplink ports ---#
-		# 	$_.Ports | ? IfRole -cmatch "fc.*uplink" | % {
-		# 		$port = $_
-		# 		$uplinkHash = @{}
-		# 		$uplinkHash.Dn = $_.Dn
-		# 		$uplinkHash.PortId = $_.PortId
-		# 		$uplinkHash.SlotId = $_.SlotId
-		# 		$uplinkHash.Fabric_Id = $_.SwitchId
-		# 		$uplinkHash.Mac = $_.Mac
-		# 		$uplinkHash.Speed = $_.OperSpeed
-		# 		$uplinkHash.IfType = $_.IfType
-		# 		$uplinkHash.XcvrType = $_.XcvrType
-		# 		$uplinkHash.Performance = @{}
-		# 		$uplinkHash.Performance.Rx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "rx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
-		# 		$uplinkHash.Performance.Tx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "tx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
-		# 		$uplinkHash.Status = $_.OperState
-		# 		$uplinkHash.State = $_.AdminState
-		# 		$DomainHash.San.UplinkFcoePorts += $uplinkHash
-		# 	}
-		# 	#--- FC Uplink Ports ---#
-		# 	$_.FcUplinkPorts | % {
-		# 		$port = $_
-		# 		$uplinkHash = @{}
-		# 		$uplinkHash.Dn = $_.Dn
-		# 		$uplinkHash.PortId = $_.PortId
-		# 		$uplinkHash.SlotId = $_.SlotId
-		# 		$uplinkHash.Fabric_Id = $_.SwitchId
-		# 		$uplinkHash.Wwn = $_.Wwn
-		# 		$uplinkHash.Speed = $_.OperSpeed
-		# 		$uplinkHash.Mode = $_.Mode
-		# 		$uplinkHash.XcvrType = $_.XcvrType
-		# 		$uplinkHash.Performance = @{}
-		# 		$stats = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/stats" -and $_.Rn -cmatch "stats"}
-		# 		$uplinkHash.Performance.Rx = $stats | Select BytesRx,PacketsRx,BytesRxDeltaAvg
-		# 		$uplinkHash.Performance.Tx = $stats | Select BytesTx,PacketsTx,BytesTxDeltaAvg
-		# 		$uplinkHash.Status = $_.OperState
-		# 		$uplinkHash.State = $_.AdminState
-		# 		$DomainHash.San.UplinkFcPorts += $uplinkHash
-		# 	}
-		# 	#--- SAN storage ports ---#
-		# 	$_.Ports | ? IfRole -cmatch "storage" | % {
-		# 		$port = $_
-		# 		$storagePortHash = @{}
-		# 		$storagePortHash.Dn = $_.Dn
-		# 		$storagePortHash.PortId = $_.PortId
-		# 		$storagePortHash.SlotId = $_.SlotId
-		# 		$storagePortHash.Fabric_Id = $_.SwitchId
-		# 		$storagePortHash.Mac = $_.Mac
-		# 		$storagePortHash.Speed = $_.OperSpeed
-		# 		$storagePortHash.IfType = $_.IfType
-		# 		$storagePortHash.XcvrType = $_.XcvrType
-		# 		$storagePortHash.Performance = @{}
-		# 		$storagePortHash.Performance.Rx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "rx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
-		# 		$storagePortHash.Performance.Tx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "tx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
-		# 		$storagePortHash.Status = $_.OperState
-		# 		$storagePortHash.State = $_.AdminState
-		# 		$DomainHash.San.StoragePorts += $storagePortHash
-		# 	}
-		# }
-		# #--- Uplink PortChannels ---#
-		# $DomainHash.San.UplinkPcs = @()
-		# #--- Native FC PC uplinks ---#
-		# Get-UcsFcUplinkPortChannel -Ucs $handle | % {
-		# 	$uplinkHash = @{}
-		# 	$uplinkHash.Name = $_.Rn
-		# 	$uplinkHash.Members = $_ | Get-UcsUplinkFcPort | Select EpDn,PeerDn
-		# 	$DomainHash.San.UplinkPcs += $uplinkHash
-		# }
-		# #--- FCoE PC uplinks ---#
-		# Get-UcsFabricFcoeSanPc -Ucs $handle | % {
-		# 	$uplinkHash = @{}
-		# 	$uplinkHash.Name = $_.Rn
-		# 	$uplinkHash.Members = $_ | Get-UcsFabricFcoeSanPcEp | Select EpDn
-		# 	$DomainHash.San.FcoePcs += $uplinkHash
-		# }
+		#--- Start SAN Configuration ---#
+		#--- Uplink and Storage Ports ---#
+		$DomainHash.San.UplinkFcoePorts = @()
+		$DomainHash.San.UplinkFcPorts = @()
+		$DomainHash.San.StoragePorts = @()
+		#--- Iterate through each FI and grab san performance data based on port role ---#
+		$DomainHash.Inventory.FIs | % {
+			#--- SAN uplink ports ---#
+			$_.Ports | ? IfRole -cmatch "fc.*uplink" | % {
+				$port = $_
+				$uplinkHash = @{}
+				$uplinkHash.Dn = $_.Dn
+				$uplinkHash.PortId = $_.PortId
+				$uplinkHash.SlotId = $_.SlotId
+				$uplinkHash.Fabric_Id = $_.SwitchId
+				$uplinkHash.Mac = $_.Mac
+				$uplinkHash.Speed = $_.OperSpeed
+				$uplinkHash.IfType = $_.IfType
+				$uplinkHash.XcvrType = $_.XcvrType
+				$uplinkHash.Performance = @{}
+				$uplinkHash.Performance.Rx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "rx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
+				$uplinkHash.Performance.Tx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "tx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
+				$uplinkHash.Status = $_.OperState
+				$uplinkHash.State = $_.AdminState
+				$DomainHash.San.UplinkFcoePorts += $uplinkHash
+			}
+			#--- FC Uplink Ports ---#
+			$_.FcUplinkPorts | % {
+				$port = $_
+				$uplinkHash = @{}
+				$uplinkHash.Dn = $_.Dn
+				$uplinkHash.PortId = $_.PortId
+				$uplinkHash.SlotId = $_.SlotId
+				$uplinkHash.Fabric_Id = $_.SwitchId
+				$uplinkHash.Wwn = $_.Wwn
+				$uplinkHash.Speed = $_.OperSpeed
+				$uplinkHash.Mode = $_.Mode
+				$uplinkHash.XcvrType = $_.XcvrType
+				$uplinkHash.Performance = @{}
+				$stats = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/stats" -and $_.Rn -cmatch "stats"}
+				$uplinkHash.Performance.Rx = $stats | Select BytesRx,PacketsRx,BytesRxDeltaAvg
+				$uplinkHash.Performance.Tx = $stats | Select BytesTx,PacketsTx,BytesTxDeltaAvg
+				$uplinkHash.Status = $_.OperState
+				$uplinkHash.State = $_.AdminState
+				$DomainHash.San.UplinkFcPorts += $uplinkHash
+			}
+			#--- SAN storage ports ---#
+			$_.Ports | ? IfRole -cmatch "storage" | % {
+				$port = $_
+				$storagePortHash = @{}
+				$storagePortHash.Dn = $_.Dn
+				$storagePortHash.PortId = $_.PortId
+				$storagePortHash.SlotId = $_.SlotId
+				$storagePortHash.Fabric_Id = $_.SwitchId
+				$storagePortHash.Mac = $_.Mac
+				$storagePortHash.Speed = $_.OperSpeed
+				$storagePortHash.IfType = $_.IfType
+				$storagePortHash.XcvrType = $_.XcvrType
+				$storagePortHash.Performance = @{}
+				$storagePortHash.Performance.Rx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "rx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
+				$storagePortHash.Performance.Tx = $statistics | ? {$_.Dn -cmatch "$($port.Dn)/.*stats" -and $_.Rn -cmatch "tx[-]stats"} | Select TotalBytes,TotalPackets,TotalBytesDeltaAvg
+				$storagePortHash.Status = $_.OperState
+				$storagePortHash.State = $_.AdminState
+				$DomainHash.San.StoragePorts += $storagePortHash
+			}
+		}
+		#--- Uplink PortChannels ---#
+		$DomainHash.San.UplinkPcs = @()
+		#--- Native FC PC uplinks ---#
+		Get-UcsFcUplinkPortChannel -Ucs $handle | % {
+			$uplinkHash = @{}
+			$uplinkHash.Name = $_.Rn
+			$uplinkHash.Members = $_ | Get-UcsUplinkFcPort | Select EpDn,PeerDn
+			$DomainHash.San.UplinkPcs += $uplinkHash
+		}
+		#--- FCoE PC uplinks ---#
+		Get-UcsFabricFcoeSanPc -Ucs $handle | % {
+			$uplinkHash = @{}
+			$uplinkHash.Name = $_.Rn
+			$uplinkHash.Members = $_ | Get-UcsFabricFcoeSanPcEp | Select EpDn
+			$DomainHash.San.FcoePcs += $uplinkHash
+		}
 		
-		# #--- VSANs ---#
-		# $DomainHash.San.Vsans = @()
-		# $DomainHash.San.Vsans += Get-UcsVsan -Ucs $handle | Select FcoeVlan,Id,name,SwitchId,ZoningState,IfRole,IfType,Transport
+		#--- VSANs ---#
+		$DomainHash.San.Vsans = @()
+		$DomainHash.San.Vsans += Get-UcsVsan -Ucs $handle | Select FcoeVlan,Id,name,SwitchId,ZoningState,IfRole,IfType,Transport
 		
-		# #--- WWN Pools ---#
-		# $DomainHash.San.Wwn_Pools = @()
-		# Get-UcsWwnPool -Ucs $handle | % {
-		# 	$wwnHash = @{}
-		# 	$wwnHash.Name = $_.Name
-		# 	$wwnHash.Assigned = $_.Assigned
-		# 	$wwnHash.Size = $_.Size
-		# 	$wwnHash.Purpose = $_.Purpose
-		# 	($wwnHash.From,$wwnHash.To) = $_ | Get-UcsWwnMemberBlock | Select From,To | % {$_.From,$_.To}
-		# 	$DomainHash.San.Wwn_Pools += $wwnHash
-		# }
-		# #--- WWN Allocations ---#
-		# $DomainHash.San.Wwn_Allocations = @()
-		# $DomainHash.San.Wwn_Allocations += Get-UcsWwnInitiator | Select AssignedToDn,Id,Assigned,Purpose
+		#--- WWN Pools ---#
+		$DomainHash.San.Wwn_Pools = @()
+		Get-UcsWwnPool -Ucs $handle | % {
+			$wwnHash = @{}
+			$wwnHash.Name = $_.Name
+			$wwnHash.Assigned = $_.Assigned
+			$wwnHash.Size = $_.Size
+			$wwnHash.Purpose = $_.Purpose
+			($wwnHash.From,$wwnHash.To) = $_ | Get-UcsWwnMemberBlock | Select From,To | % {$_.From,$_.To}
+			$DomainHash.San.Wwn_Pools += $wwnHash
+		}
+		#--- WWN Allocations ---#
+		$DomainHash.San.Wwn_Allocations = @()
+		$DomainHash.San.Wwn_Allocations += Get-UcsWwnInitiator | Select AssignedToDn,Id,Assigned,Purpose
 		
-		# #--- vHba Templates ---#
-		# $DomainHash.San.vHba_Templates = Get-UcsVhbaTemplate -Ucs $handle | Select Name,TempType
+		#--- vHba Templates ---#
+		$DomainHash.San.vHba_Templates = Get-UcsVhbaTemplate -Ucs $handle | Select Name,TempType
 		
-		# #--- End San Configuration ---#
+		#--- End San Configuration ---#
 		
-		# #--- Get Event List ---#
-		# #--- Update current job progress ---#
-		# $Process_Hash.Progress[$domain] = 84
-		# #--- Grab faults of critical, major, minor, and warning severity sorted by severity ---#
-		# $faultList = Get-UcsFault -Ucs $handle -Filter 'Severity -cmatch "critical|major|minor|warning"' | Sort-Object -Property Ucs,Severity | Select-Object Ucs,Severity,Created,Descr,dn
-		# if($faultList)
-		# {
-		# 	#--- Iterate through each fault and grab information ---#
-		# 	foreach ($fault in $faultList)
-		# 	{
-		# 		$faultHash = @{}
-		# 		$faultHash.Severity = $fault.Severity;
-		# 		$faultHash.Descr = $fault.Descr
-		# 		$faultHash.Dn = $fault.Dn
-		# 		$faultHash.Date = $fault.Created
-		# 		$DomainHash.Faults += $faultHash
-		# 	}
-		# }
+		#--- Get Event List ---#
+		#--- Update current job progress ---#
+		$Process_Hash.Progress[$domain] = 84
+		#--- Grab faults of critical, major, minor, and warning severity sorted by severity ---#
+		$faultList = Get-UcsFault -Ucs $handle -Filter 'Severity -cmatch "critical|major|minor|warning"' | Sort-Object -Property Ucs,Severity | Select-Object Ucs,Severity,Created,Descr,dn
+		if($faultList)
+		{
+			#--- Iterate through each fault and grab information ---#
+			foreach ($fault in $faultList)
+			{
+				$faultHash = @{}
+				$faultHash.Severity = $fault.Severity;
+				$faultHash.Descr = $fault.Descr
+				$faultHash.Dn = $fault.Dn
+				$faultHash.Date = $fault.Created
+				$DomainHash.Faults += $faultHash
+			}
+		}
 		#--- Update current job progress ---#
 		$Process_Hash.Progress[$domain] = 96
 		Complete-UcsTransaction -Ucs $handle
@@ -2390,7 +2457,7 @@ function Generate_Health_Check
 	
 	#--- Update overall progress to complete ---#
 	Write-Progress "Done" "Done" -Completed
-	$Process_Hash.Meta | ConvertTo-Json -Depth 14 -Compress | Out-File "./dist/reports/$Report_Directory/meta.json" | Out-Null
+	# $Process_Hash.Meta | ConvertTo-Json -Depth 14 -Compress | Out-File "./reports/$Report_Directory/meta.json" | Out-Null
 
 	# Write-Host "Writing report files"
 	# $Process_Hash.Domains.get_keys() | % {
