@@ -521,6 +521,7 @@ function Generate_Health_Check
 		#	Start System Data Collection	#
 		#===================================#
 		$Process_Hash.Progress[$domain] = 1
+		$EquipmentDef = Get-UcsEquipmentManufacturingDef -Ucs $handle
 		
 		#--- Get UCS Cluster State ---#
 		$system = Get-UcsStatus -Ucs $handle | Select-Object Name,VirtualIpv4Address,HaReady,FiALeadership,FiAManagementServicesState,FiBLeadership,FiBManagementServicesState
@@ -577,7 +578,7 @@ function Generate_Health_Check
 			}
 			
 			#--- Get the common name of the fi from the manufacturing definition and format the text ---#
-			$fiModel = (Get-UcsEquipmentTpmCapProvider | Get-UcsEquipmentManufacturingDef -Ucs $handle -Filter "Sku -cmatch $($fi.Model)" | Select-Object Name).Name -replace "Cisco UCS ", ""
+			$fiModel = ($EquipmentDef | ?  "Sku -cmatch $($fi.Model)" | Select-Object Name).Name -replace "Cisco UCS ", ""
 			if($fiModel -is [array]) { $fiHash.Model = $fiModel.Item(0) -replace "Cisco UCS ", "" }
 			else { $fiHash.Model = $fiModel -replace "Cisco UCS ", "" }
 			
