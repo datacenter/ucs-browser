@@ -14,7 +14,7 @@
 ---
 
 ### Cloning a specific Version
-Always checkout a specific version of this repo and **AVOID** using master.
+Always checkout a specific version of this repo and **AVOID** using master.<br />
 `git clone https://github.com/datacenter/ucs-browser.git && cd ucs-browser && git checkout 2.7`
 
 ### Running the Script
