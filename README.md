@@ -13,6 +13,10 @@
 
 ---
 
+### Cloning a specific Version
+Always checkout a specific version of this repo and **AVOID** using master.
+`git clone https://github.com/datacenter/ucs-browser.git && cd ucs-browser && git checkout 2.7`
+
 ### Running the Script
 Before generating the report select option `1)` from the root menu and connect to one or more target UCS Domains.  Select option `2)` from the connection menu to cache the domain credentials and speed up future executions.<br />
 
@@ -20,7 +24,7 @@ Before generating the report select option `1)` from the root menu and connect t
 The save file dialog relies on .NET and therefore doesn't work on linux based systems.  To get around this limitation connect to and cache ucs doman credentials as mentioned above and then exit the script.  Next, relaunch the script using the `-RunReport`, `-UseCached` and `-Silent` flags
 
 
-Ex: .\UCS_Health_Check_v2.7.ps1 -UseCached -RunReport -Silent -Email user@domain.com
+Ex: .\UCS_Health_Check.ps1 -UseCached -RunReport -Silent -Email user@domain.com
 
 ---
 ### Parameters
